@@ -20,6 +20,7 @@ public record GamePlayerResponse(
         List<String> prizeCardIds,
         List<String> benchCardIds,
         Map<String, List<String>> attachedEnergyCardIdsByPokemonCardId,
+        Map<String, Integer> damageByPokemonCardId,
         List<String> discardCardIds
 ) {
 }

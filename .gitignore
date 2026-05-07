@@ -1,4 +1,21 @@
+# Angular / Node
 node_modules/
+FE/node_modules/
 dist/
+FE/dist/
 .angular/
+FE/.angular/
 npm-debug.log*
+
+# Java / Maven
+target/
+BE/target/
+*.class
+
+# IDE
+.vscode/
+.idea/
+
+# Sistema
+.DS_Store
+Thumbs.db

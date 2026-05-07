@@ -60,6 +60,10 @@ public class GamePlayerEntity {
     @Column(columnDefinition = "jsonb")
     private Map<String, List<String>> attachedEnergyCardIdsByPokemonCardId = new HashMap<>();
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private Map<String, Integer> damageByPokemonCardId = new HashMap<>();
+
     @Column(nullable = false)
     private boolean energyAttachedThisTurn;
 
@@ -145,6 +149,14 @@ public class GamePlayerEntity {
 
     public void setAttachedEnergyCardIdsByPokemonCardId(Map<String, List<String>> attachedEnergyCardIdsByPokemonCardId) {
         this.attachedEnergyCardIdsByPokemonCardId = attachedEnergyCardIdsByPokemonCardId;
+    }
+
+    public Map<String, Integer> getDamageByPokemonCardId() {
+        return damageByPokemonCardId;
+    }
+
+    public void setDamageByPokemonCardId(Map<String, Integer> damageByPokemonCardId) {
+        this.damageByPokemonCardId = damageByPokemonCardId;
     }
 
     public boolean isEnergyAttachedThisTurn() {

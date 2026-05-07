@@ -17,6 +17,7 @@ import { RouterLink } from '@angular/router';
           <a routerLink="/cards">Ver cartas</a>
           <a routerLink="/deck-builder">Crear mazo</a>
           <a routerLink="/decks">Ver mazos</a>
+          <a routerLink="/game">Probar partida</a>
         </div>
       </section>
     </main>

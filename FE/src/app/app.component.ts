@@ -12,6 +12,7 @@ import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
         <a routerLink="/cards" routerLinkActive="active">Cartas</a>
         <a routerLink="/decks" routerLinkActive="active">Mazos</a>
         <a routerLink="/deck-builder" routerLinkActive="active">Deck Builder</a>
+        <a routerLink="/game" routerLinkActive="active">Partidas</a>
       </nav>
     </header>
 

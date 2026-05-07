@@ -260,7 +260,7 @@ mvn test
 
 ## Frontend
 
-El frontend inicial esta en la carpeta `FE/` y usa Angular con TypeScript, routing y servicios HTTP.
+El frontend esta en la carpeta `FE/` y usa Angular con TypeScript, routing y servicios HTTP.
 
 Pantallas disponibles:
 
@@ -268,6 +268,7 @@ Pantallas disponibles:
 - Cartas: `/cards`
 - Mazos: `/decks`
 - Deck Builder: `/deck-builder`
+- Partidas: `/game`
 
 El frontend usa los endpoints reales del backend:
 
@@ -275,7 +276,18 @@ El frontend usa los endpoints reales del backend:
 - `GET /api/decks`
 - `GET /api/decks/{id}`
 - `POST /api/decks`
+- `PUT /api/decks/{id}`
+- `DELETE /api/decks/{id}`
 - `POST /api/decks/{id}/validate`
+- `GET /api/games`
+- `GET /api/games/{id}`
+- `POST /api/games`
+- `POST /api/games/{id}/join`
+- `POST /api/games/{id}/start`
+- `POST /api/games/{id}/actions/draw`
+- `POST /api/games/{id}/actions/end-turn`
+- `POST /api/games/{id}/actions/play-basic-pokemon`
+- `POST /api/games/{id}/actions/attach-energy`
 
 No hay endpoints `/api/tarjetas` implementados actualmente. Conviene mantener unificado el backend en `/api/cards`.
 
@@ -298,6 +310,14 @@ http://localhost:4200
 ```
 
 El comando `npm start` usa `proxy.conf.json` para reenviar `/api` y `/ping` al backend, evitando problemas de CORS en desarrollo.
+
+### Flujo Rapido De Prueba UI
+
+1. Levantar PostgreSQL y backend.
+2. Importar cartas XY1 si la tabla esta vacia: `POST /api/cards/import/xy1`.
+3. Abrir `http://localhost:4200/decks` y usar `Mazo prueba` para crear mazos validos de 60 cartas.
+4. Abrir `http://localhost:4200/game`, crear una partida con un mazo valido y seleccionar la partida creada.
+5. Unir el segundo jugador con otro mazo valido, iniciar la partida y usar las acciones de robar, jugar Pokemon Basico, unir Energia y finalizar turno.
 
 ### Build Frontend
 

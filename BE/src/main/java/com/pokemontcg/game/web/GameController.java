@@ -1,6 +1,7 @@
 package com.pokemontcg.game.web;
 
 import com.pokemontcg.game.dto.AttachEnergyRequest;
+import com.pokemontcg.game.dto.AttackRequest;
 import com.pokemontcg.game.dto.CreateGameRequest;
 import com.pokemontcg.game.dto.GameActionRequest;
 import com.pokemontcg.game.dto.GameResponse;
@@ -73,6 +74,12 @@ public class GameController {
     @Operation(summary = "Une una Energia Basica desde la mano a un Pokemon en banca")
     public GameResponse attachEnergy(@PathVariable Long id, @Valid @RequestBody AttachEnergyRequest request) {
         return gameService.attachEnergy(id, request);
+    }
+
+    @PostMapping("/{id}/actions/attack")
+    @Operation(summary = "Ataca con el Pokemon activo del jugador actual")
+    public GameResponse attack(@PathVariable Long id, @Valid @RequestBody AttackRequest request) {
+        return gameService.attack(id, request);
     }
 
     @GetMapping

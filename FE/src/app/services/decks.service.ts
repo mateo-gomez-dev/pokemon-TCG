@@ -15,6 +15,10 @@ export class DecksService {
     return this.http.post<DeckResponse>(this.apiUrl, request);
   }
 
+  updateDeck(id: number, request: DeckRequest): Observable<DeckResponse> {
+    return this.http.put<DeckResponse>(`${this.apiUrl}/${id}`, request);
+  }
+
   getDecks(): Observable<DeckResponse[]> {
     return this.http.get<DeckResponse[]>(this.apiUrl);
   }
@@ -25,5 +29,9 @@ export class DecksService {
 
   validateDeck(id: number): Observable<DeckValidationResponse> {
     return this.http.post<DeckValidationResponse>(`${this.apiUrl}/${id}/validate`, {});
+  }
+
+  deleteDeck(id: number): Observable<void> {
+    return this.http.delete<void>(`${this.apiUrl}/${id}`);
   }
 }

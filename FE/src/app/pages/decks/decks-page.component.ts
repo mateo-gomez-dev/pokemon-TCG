@@ -15,7 +15,12 @@ import { DecksService } from '../../services/decks.service';
           <h1>Mazos</h1>
           <p class="muted">Listado desde <code>GET /api/decks</code>.</p>
         </div>
-        <button type="button" (click)="loadDecks()">Recargar</button>
+        <div class="actions">
+          <button type="button" class="secondary" (click)="createTestDeck()" [disabled]="creatingTestDeck">
+            {{ creatingTestDeck ? 'Creando...' : 'Mazo prueba' }}
+          </button>
+          <button type="button" (click)="loadDecks()">Recargar</button>
+        </div>
       </header>
 
       <p *ngIf="error" class="error">{{ error }}</p>
@@ -29,9 +34,12 @@ import { DecksService } from '../../services/decks.service';
               <h2>{{ deck.name }}</h2>
               <p class="muted">{{ deck.totalCards }} cartas</p>
             </div>
-            <strong [class.valid]="deck.valid" [class.invalid]="!deck.valid">
-              {{ deck.valid ? 'Valido' : 'Invalido' }}
-            </strong>
+            <div class="row-actions">
+              <strong [class.valid]="deck.valid" [class.invalid]="!deck.valid">
+                {{ deck.valid ? 'Valido' : 'Invalido' }}
+              </strong>
+              <button type="button" class="danger" (click)="deleteDeck(deck.id, $event)">Eliminar</button>
+            </div>
           </article>
         </div>
 
@@ -115,6 +123,20 @@ import { DecksService } from '../../services/decks.service';
       background: #f9fafb;
     }
 
+    .actions,
+    .row-actions {
+      align-items: center;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      justify-content: flex-end;
+    }
+
+    .danger {
+      background: #dc2626;
+      padding: 0.45rem 0.7rem;
+    }
+
     .valid {
       color: #15803d;
     }
@@ -148,6 +170,7 @@ export class DecksPageComponent implements OnInit {
   validation: DeckValidationResponse | null = null;
   error = '';
   loading = false;
+  creatingTestDeck = false;
 
   constructor(private readonly decksService: DecksService) {
   }
@@ -184,6 +207,45 @@ export class DecksPageComponent implements OnInit {
       },
       error: () => {
         this.error = 'No se pudo validar el mazo.';
+      }
+    });
+  }
+
+  createTestDeck(): void {
+    this.creatingTestDeck = true;
+    this.error = '';
+    this.decksService.createDeck({
+      name: `Mazo prueba ${new Date().toLocaleTimeString()}`,
+      cards: [
+        { cardId: 'xy1-1', quantity: 4 },
+        { cardId: 'xy1-132', quantity: 56 }
+      ]
+    }).subscribe({
+      next: (deck) => {
+        this.creatingTestDeck = false;
+        this.selectedDeck = deck;
+        this.loadDecks();
+      },
+      error: () => {
+        this.error = 'No se pudo crear el mazo prueba. Verifica que las cartas XY1 esten importadas.';
+        this.creatingTestDeck = false;
+      }
+    });
+  }
+
+  deleteDeck(deckId: number, event: MouseEvent): void {
+    event.stopPropagation();
+    this.error = '';
+    this.decksService.deleteDeck(deckId).subscribe({
+      next: () => {
+        if (this.selectedDeck?.id === deckId) {
+          this.selectedDeck = null;
+          this.validation = null;
+        }
+        this.loadDecks();
+      },
+      error: () => {
+        this.error = 'No se pudo eliminar el mazo. Puede estar usado por una partida.';
       }
     });
   }

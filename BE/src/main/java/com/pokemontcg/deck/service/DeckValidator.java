@@ -10,12 +10,18 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 @Component
 public class DeckValidator {
 
     private static final int REQUIRED_TOTAL_CARDS = 60;
     private static final int MAX_COPIES_BY_NAME = 4;
+    private static final int MAX_ACE_SPEC_CARDS = 1;
+    private static final String POKEMON_SUPERTYPE = "Pokémon";
+    private static final String ENERGY_SUPERTYPE = "Energy";
+    private static final String BASIC_SUBTYPE = "Basic";
+    private static final Set<String> ACE_SPEC_SUBTYPES = Set.of("ACE SPEC", "AS TACTICO", "AS TÁCTICO");
 
     public DeckValidationResponse validate(List<DeckCardEntity> deckCards) {
         int totalCards = deckCards.stream()
@@ -51,18 +57,18 @@ public class DeckValidator {
 
     private void validateAceSpec(List<DeckCardEntity> deckCards, List<String> errors) {
         int aceSpecCount = deckCards.stream()
-                .filter(deckCard -> hasSubtype(deckCard.getCard(), "ACE SPEC") || hasSubtype(deckCard.getCard(), "AS TACTICO") || hasSubtype(deckCard.getCard(), "AS TÁCTICO"))
+                .filter(deckCard -> hasAnySubtype(deckCard.getCard(), ACE_SPEC_SUBTYPES))
                 .mapToInt(DeckCardEntity::getQuantity)
                 .sum();
 
-        if (aceSpecCount > 1) {
-            errors.add("El mazo puede tener como maximo 1 carta de AS TACTICO.");
+        if (aceSpecCount > MAX_ACE_SPEC_CARDS) {
+            errors.add("El mazo puede tener como maximo " + MAX_ACE_SPEC_CARDS + " carta de AS TACTICO.");
         }
     }
 
     private void validateBasicPokemon(List<DeckCardEntity> deckCards, List<String> errors) {
         boolean hasBasicPokemon = deckCards.stream()
-                .anyMatch(deckCard -> "Pokémon".equalsIgnoreCase(deckCard.getCard().getSupertype()) && hasSubtype(deckCard.getCard(), "Basic"));
+                .anyMatch(deckCard -> POKEMON_SUPERTYPE.equalsIgnoreCase(deckCard.getCard().getSupertype()) && hasSubtype(deckCard.getCard(), BASIC_SUBTYPE));
 
         if (!hasBasicPokemon) {
             errors.add("El mazo debe tener al menos 1 Pokemon Basico.");
@@ -70,7 +76,16 @@ public class DeckValidator {
     }
 
     private boolean isBasicEnergy(CardEntity card) {
-        return "Energy".equalsIgnoreCase(card.getSupertype()) && hasSubtype(card, "Basic");
+        return ENERGY_SUPERTYPE.equalsIgnoreCase(card.getSupertype()) && hasSubtype(card, BASIC_SUBTYPE);
+    }
+
+    private boolean hasAnySubtype(CardEntity card, Set<String> subtypes) {
+        if (card.getSubtypes() == null) {
+            return false;
+        }
+        return card.getSubtypes().stream()
+                .map(this::normalize)
+                .anyMatch(subtypes::contains);
     }
 
     private boolean hasSubtype(CardEntity card, String subtype) {

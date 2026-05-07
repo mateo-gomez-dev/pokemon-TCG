@@ -18,6 +18,8 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class DeckService {
@@ -87,15 +89,23 @@ public class DeckService {
             quantitiesByCardId.merge(cardRequest.cardId(), cardRequest.quantity(), Integer::sum);
         }
 
+        Map<String, CardEntity> cardsById = cardRepository.findAllById(quantitiesByCardId.keySet()).stream()
+                .collect(Collectors.toMap(CardEntity::getId, Function.identity()));
+
         return quantitiesByCardId.entrySet().stream()
-                .map(entry -> toDeckCard(entry.getKey(), entry.getValue()))
+                .map(entry -> toDeckCard(findCard(cardsById, entry.getKey()), entry.getValue()))
                 .toList();
     }
 
-    private DeckCardEntity toDeckCard(String cardId, int quantity) {
-        CardEntity card = cardRepository.findById(cardId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "La carta " + cardId + " no existe en el cache local"));
+    private CardEntity findCard(Map<String, CardEntity> cardsById, String cardId) {
+        CardEntity card = cardsById.get(cardId);
+        if (card == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La carta " + cardId + " no existe en el cache local");
+        }
+        return card;
+    }
 
+    private DeckCardEntity toDeckCard(CardEntity card, int quantity) {
         DeckCardEntity deckCard = new DeckCardEntity();
         deckCard.setCard(card);
         deckCard.setQuantity(quantity);
