@@ -32,12 +32,16 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+
+import static com.pokemontcg.card.domain.CardRules.BASIC_SUBTYPE;
+import static com.pokemontcg.card.domain.CardRules.ENERGY_SUPERTYPE;
+import static com.pokemontcg.card.domain.CardRules.POKEMON_SUPERTYPE;
+import static com.pokemontcg.card.domain.CardRules.hasSubtype;
 
 @Service
 public class GameService {
@@ -51,10 +55,6 @@ public class GameService {
     private static final int PRIZE_CARD_COUNT = 6;
     private static final int PRIZE_CARDS_START_INDEX = INITIAL_HAND_SIZE;
     private static final int REMAINING_DECK_START_INDEX = INITIAL_HAND_SIZE + PRIZE_CARD_COUNT;
-    private static final String POKEMON_SUPERTYPE = "Pokémon";
-    private static final String ENERGY_SUPERTYPE = "Energy";
-    private static final String BASIC_SUBTYPE = "Basic";
-
     private final GameRepository gameRepository;
     private final DeckRepository deckRepository;
     private final DeckValidator deckValidator;
@@ -382,20 +382,6 @@ public class GameService {
         log.setActionType(actionType);
         log.setMessage(message);
         game.addLog(log);
-    }
-
-    private boolean hasSubtype(CardEntity card, String subtype) {
-        if (card.getSubtypes() == null) {
-            return false;
-        }
-        String normalizedSubtype = normalize(subtype);
-        return card.getSubtypes().stream()
-                .map(this::normalize)
-                .anyMatch(normalizedSubtype::equals);
-    }
-
-    private String normalize(String value) {
-        return value == null ? "" : value.toUpperCase(Locale.ROOT);
     }
 
     private void validateDeck(GamePlayerEntity player) {

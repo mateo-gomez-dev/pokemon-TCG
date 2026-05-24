@@ -50,7 +50,7 @@ import { DecksService } from '../../services/decks.service';
             </tr>
           </thead>
           <tbody>
-            <tr *ngFor="let card of cards">
+            <tr *ngFor="let card of cards; trackBy: trackByCardId">
               <td>
                 <img [src]="card.imageSmallUrl" [alt]="card.name" *ngIf="card.imageSmallUrl">
               </td>
@@ -203,5 +203,9 @@ export class DeckBuilderPageComponent implements OnInit {
     return Object.entries(this.quantities)
       .filter(([, quantity]) => quantity > 0)
       .map(([cardId, quantity]) => ({ cardId, quantity }));
+  }
+
+  trackByCardId(_index: number, card: Card): string {
+    return card.id;
   }
 }

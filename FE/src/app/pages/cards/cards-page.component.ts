@@ -22,7 +22,7 @@ import { CardsService } from '../../services/cards.service';
       <p *ngIf="loading" class="muted">Cargando cartas...</p>
 
       <section class="cards-grid" *ngIf="!loading">
-        <article class="card" *ngFor="let card of cards">
+        <article class="card" *ngFor="let card of cards; trackBy: trackByCardId">
           <img [src]="card.imageSmallUrl" [alt]="card.name" *ngIf="card.imageSmallUrl; else noImage">
           <ng-template #noImage>
             <div class="no-image">Sin imagen</div>
@@ -32,7 +32,7 @@ import { CardsService } from '../../services/cards.service';
             <p>{{ card.supertype || 'Sin tipo' }}</p>
             <p class="muted" *ngIf="card.hp">HP {{ card.hp }}</p>
             <div class="tags">
-              <span *ngFor="let subtype of card.subtypes">{{ subtype }}</span>
+              <span *ngFor="let subtype of card.subtypes; trackBy: trackByIndex">{{ subtype }}</span>
             </div>
           </div>
         </article>
@@ -137,5 +137,13 @@ export class CardsPageComponent implements OnInit {
         this.loading = false;
       }
     });
+  }
+
+  trackByCardId(_index: number, card: Card): string {
+    return card.id;
+  }
+
+  trackByIndex(index: number): number {
+    return index;
   }
 }

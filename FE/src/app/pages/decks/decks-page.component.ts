@@ -29,7 +29,7 @@ import { DecksService } from '../../services/decks.service';
       <section class="layout" *ngIf="!loading">
         <div class="panel list">
           <p *ngIf="decks.length === 0" class="muted">Todavia no hay mazos creados.</p>
-          <article class="deck-row" *ngFor="let deck of decks" (click)="selectDeck(deck)">
+          <article class="deck-row" *ngFor="let deck of decks; trackBy: trackByDeckId" (click)="selectDeck(deck)">
             <div>
               <h2>{{ deck.name }}</h2>
               <p class="muted">{{ deck.totalCards }} cartas</p>
@@ -56,7 +56,7 @@ import { DecksService } from '../../services/decks.service';
             <strong>{{ validation.valid ? 'Mazo valido' : 'Mazo invalido' }}</strong>
             <p>Total: {{ validation.totalCards }} cartas</p>
             <ul *ngIf="validation.errors.length > 0">
-              <li *ngFor="let validationError of validation.errors">{{ validationError }}</li>
+              <li *ngFor="let validationError of validation.errors; trackBy: trackByIndex">{{ validationError }}</li>
             </ul>
           </div>
 
@@ -70,7 +70,7 @@ import { DecksService } from '../../services/decks.service';
               </tr>
             </thead>
             <tbody>
-              <tr *ngFor="let deckCard of selectedDeck.cards">
+              <tr *ngFor="let deckCard of selectedDeck.cards; trackBy: trackByDeckCardId">
                 <td>{{ deckCard.quantity }}</td>
                 <td>{{ deckCard.name }}</td>
                 <td>{{ deckCard.supertype }}</td>
@@ -185,6 +185,9 @@ export class DecksPageComponent implements OnInit {
     this.decksService.getDecks().subscribe({
       next: (decks) => {
         this.decks = decks;
+        if (this.selectedDeck) {
+          this.selectedDeck = decks.find((deck) => deck.id === this.selectedDeck?.id) ?? this.selectedDeck;
+        }
         this.loading = false;
       },
       error: () => {
@@ -248,5 +251,17 @@ export class DecksPageComponent implements OnInit {
         this.error = 'No se pudo eliminar el mazo. Puede estar usado por una partida.';
       }
     });
+  }
+
+  trackByDeckId(_index: number, deck: DeckResponse): number {
+    return deck.id;
+  }
+
+  trackByDeckCardId(index: number, deckCard: { cardId?: string }): string {
+    return deckCard.cardId ?? String(index);
+  }
+
+  trackByIndex(index: number): number {
+    return index;
   }
 }

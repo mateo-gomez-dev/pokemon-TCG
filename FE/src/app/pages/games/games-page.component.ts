@@ -47,7 +47,7 @@ import { GamesService } from '../../services/games.service';
                 Mazo
                 <select [(ngModel)]="createDeckId" name="createDeckId">
                   <option [ngValue]="undefined">Seleccionar</option>
-                  <option *ngFor="let deck of validDecks" [ngValue]="deck.id">{{ deck.name }} #{{ deck.id }}</option>
+                  <option *ngFor="let deck of validDecks; trackBy: trackByDeckId" [ngValue]="deck.id">{{ deck.name }} #{{ deck.id }}</option>
                 </select>
               </label>
               <button type="submit" [disabled]="!createPlayerName.trim() || !createDeckId">Crear</button>
@@ -68,7 +68,7 @@ import { GamesService } from '../../services/games.service';
                 Mazo
                 <select [(ngModel)]="joinDeckId" name="joinDeckId">
                   <option [ngValue]="undefined">Seleccionar</option>
-                  <option *ngFor="let deck of validDecks" [ngValue]="deck.id">{{ deck.name }} #{{ deck.id }}</option>
+                  <option *ngFor="let deck of validDecks; trackBy: trackByDeckId" [ngValue]="deck.id">{{ deck.name }} #{{ deck.id }}</option>
                 </select>
               </label>
               <button type="submit" [disabled]="!selectedGame || selectedGame.status !== 'WAITING' || !joinPlayerName.trim() || !joinDeckId">
@@ -86,7 +86,7 @@ import { GamesService } from '../../services/games.service';
             <button
               type="button"
               class="saved-game"
-              *ngFor="let game of games"
+              *ngFor="let game of games; trackBy: trackByGameId"
               [class.selected]="selectedGame?.id === game.id"
               (click)="selectGame(game.id)"
             >
@@ -122,7 +122,7 @@ import { GamesService } from '../../services/games.service';
                 <strong>{{ opponent.playerName }}</strong>
               </div>
               <div class="hidden-hand" aria-label="Mano rival">
-                <div class="card-back mini" *ngFor="let cardId of opponent.handCardIds.slice(0, 7)"></div>
+                <div class="card-back mini" *ngFor="let cardId of opponent.handCardIds.slice(0, 7); trackBy: trackByIndex"></div>
                 <span *ngIf="opponent.handSize > 7" class="more-cards">+{{ opponent.handSize - 7 }}</span>
               </div>
               <div class="side-zones top-zones">
@@ -133,7 +133,7 @@ import { GamesService } from '../../services/games.service';
             </section>
 
             <section class="bench-row opponent-bench" *ngIf="opponentPlayer as opponent">
-              <div class="slot bench-slot" *ngFor="let slot of benchSlots">
+              <div class="slot bench-slot" *ngFor="let slot of benchSlots; trackBy: trackByIndex">
                 <ng-container *ngIf="opponent.benchCardIds[slot] as cardId; else emptyOpponentBench">
                   <article class="tcg-card bench-card" [class.glow]="slot === 0">
                     <ng-container *ngTemplateOutlet="cardFace; context: { cardId: cardId, player: opponent, compact: true }"></ng-container>
@@ -183,7 +183,7 @@ import { GamesService } from '../../services/games.service';
             </section>
 
             <section class="bench-row player-bench" *ngIf="boardPlayer as player">
-              <div class="slot bench-slot" *ngFor="let slot of benchSlots">
+              <div class="slot bench-slot" *ngFor="let slot of benchSlots; trackBy: trackByIndex">
                 <ng-container *ngIf="player.benchCardIds[slot] as cardId; else emptyPlayerBench">
                   <article class="tcg-card bench-card" [class.glow]="slot === 0">
                     <ng-container *ngTemplateOutlet="cardFace; context: { cardId: cardId, player: player, compact: true }"></ng-container>
@@ -209,7 +209,7 @@ import { GamesService } from '../../services/games.service';
             <section class="hand-fan" *ngIf="boardPlayer as player">
               <article
                 class="tcg-card hand-card"
-                *ngFor="let cardId of player.handCardIds; let i = index"
+                *ngFor="let cardId of player.handCardIds; let i = index; trackBy: trackByIndexedCardId"
                 [style.transform]="handTransform(i, player.handCardIds.length)"
                 [class.selectable]="isBasicPokemon(cardId) || isBasicEnergy(cardId)"
               >
@@ -220,7 +220,7 @@ import { GamesService } from '../../services/games.service';
 
           <aside class="floating-actions" *ngIf="currentPlayer">
             <strong>Acciones</strong>
-            <div class="action-debug">
+            <div class="action-debug" *ngIf="showDebugInfo">
               <span>Estado: {{ selectedGame.status }}</span>
               <span>Fase: {{ selectedGame.turnPhase }}</span>
               <span>CurrentPlayerId: {{ selectedGame.currentPlayerId }}</span>
@@ -234,7 +234,7 @@ import { GamesService } from '../../services/games.service';
               Pokemon Basico
               <select [(ngModel)]="selectedBasicCardId">
                 <option value="">Seleccionar</option>
-                <option *ngFor="let cardId of basicCardsInHand" [value]="cardId">{{ cardLabel(cardId) }}</option>
+                <option *ngFor="let cardId of basicCardsInHand; trackBy: trackByIndexedCardId" [value]="cardId">{{ cardLabel(cardId) }}</option>
               </select>
             </label>
             <button type="button" (click)="playBasicPokemon()" [disabled]="selectedGame.status !== 'ACTIVE' || selectedGame.turnPhase !== 'MAIN' || !selectedBasicCardId">
@@ -245,14 +245,14 @@ import { GamesService } from '../../services/games.service';
               Energia
               <select [(ngModel)]="selectedEnergyCardId">
                 <option value="">Seleccionar</option>
-                <option *ngFor="let cardId of energyCardsInHand" [value]="cardId">{{ cardLabel(cardId) }}</option>
+                <option *ngFor="let cardId of energyCardsInHand; trackBy: trackByIndexedCardId" [value]="cardId">{{ cardLabel(cardId) }}</option>
               </select>
             </label>
             <label>
               Objetivo
               <select [(ngModel)]="selectedTargetPokemonCardId">
                 <option value="">Seleccionar</option>
-                <option *ngFor="let cardId of currentPlayer.benchCardIds" [value]="cardId">{{ cardLabel(cardId) }}</option>
+                <option *ngFor="let cardId of currentPlayer.benchCardIds; trackBy: trackByIndexedCardId" [value]="cardId">{{ cardLabel(cardId) }}</option>
               </select>
             </label>
             <button type="button" (click)="attachEnergy()" [disabled]="selectedGame.status !== 'ACTIVE' || selectedGame.turnPhase !== 'MAIN' || !selectedEnergyCardId || !selectedTargetPokemonCardId">
@@ -262,12 +262,12 @@ import { GamesService } from '../../services/games.service';
               Ataque
               <select [(ngModel)]="selectedAttackName">
                 <option value="">Seleccionar</option>
-                <option *ngFor="let attack of activePokemonAttacks" [value]="attack.name">
+                <option *ngFor="let attack of activePokemonAttacks; trackBy: trackByAttackName" [value]="attack.name">
                   {{ attackLabel(attack) }}
                 </option>
               </select>
             </label>
-            <div class="action-debug attack-debug">
+            <div class="action-debug attack-debug" *ngIf="showDebugInfo">
               <span>Ataque seleccionado: {{ selectedAttackName || '-' }}</span>
               <span>Ataques disponibles: {{ activePokemonAttacks.length }}</span>
               <span>Activo actual: {{ activePokemonCardId || '-' }}</span>
@@ -282,12 +282,12 @@ import { GamesService } from '../../services/games.service';
             </button>
           </aside>
 
-          <details class="debug-panel">
+          <details class="debug-panel" *ngIf="showDebugInfo">
             <summary>Detalles / Log</summary>
             <div class="debug-grid">
               <section>
                 <h3>Jugadores</h3>
-                <article *ngFor="let player of selectedGame.players">
+                <article *ngFor="let player of selectedGame.players; trackBy: trackByPlayerId">
                   <strong>{{ player.playerName }} #{{ player.id }}</strong>
                   <p>Deck {{ player.deckRemaining }} - Mano {{ player.handSize }} - Premios {{ player.prizeCardsRemaining }} - Descarte {{ player.discardSize }}</p>
                   <p>Mano IDs: {{ player.handCardIds.join(', ') || '-' }}</p>
@@ -297,7 +297,7 @@ import { GamesService } from '../../services/games.service';
               <section>
                 <h3>Log</h3>
                 <p *ngIf="selectedGame.logs.length === 0" class="muted">Sin acciones registradas.</p>
-                <article class="log-row" *ngFor="let log of selectedGame.logs.slice().reverse()">
+                <article class="log-row" *ngFor="let log of selectedGame.logs.slice().reverse(); trackBy: trackByLogId">
                   <strong>{{ log.actionType }}</strong>
                   <span>{{ log.message }}</span>
                 </article>
@@ -1061,6 +1061,7 @@ import { GamesService } from '../../services/games.service';
 })
 export class GamesPageComponent implements OnInit {
   readonly benchSlots = [0, 1, 2, 3, 4];
+  readonly showDebugInfo = false;
   decks: DeckResponse[] = [];
   games: GameResponse[] = [];
   selectedGame: GameResponse | null = null;
@@ -1298,27 +1299,45 @@ export class GamesPageComponent implements OnInit {
   }
 
   attack(): void {
-    console.log('Atacar clickeado', this.selectedAttackName, this.selectedGame);
     if (!this.selectedGame?.currentPlayerId || !this.selectedAttackName) {
       return;
     }
-    this.error = '';
-    this.message = '';
-    this.gamesService.attack(this.selectedGame.id, {
+    this.runGameMutation(
+      this.gamesService.attack(this.selectedGame.id, {
         playerId: this.selectedGame.currentPlayerId,
         attackName: this.selectedAttackName
-      }).subscribe({
-        next: (game) => {
-          this.message = 'Ataque realizado.';
-          this.setSelectedGame(game);
-          this.refreshSelectedGame();
-          this.loadGames();
-        },
-        error: (error) => {
-          console.error(error);
-          this.error = this.backendError(error, 'No se pudo atacar.');
-        }
-      });
+      }),
+      'Ataque realizado.',
+      'No se pudo atacar.'
+    );
+  }
+
+  trackByDeckId(_index: number, deck: DeckResponse): number {
+    return deck.id;
+  }
+
+  trackByGameId(_index: number, game: GameResponse): number {
+    return game.id;
+  }
+
+  trackByPlayerId(_index: number, player: GamePlayerResponse): number {
+    return player.id;
+  }
+
+  trackByLogId(index: number, log: { id?: number }): number {
+    return log.id ?? index;
+  }
+
+  trackByAttackName(index: number, attack: CardAttack): string {
+    return attack.name || String(index);
+  }
+
+  trackByIndex(index: number): number {
+    return index;
+  }
+
+  trackByIndexedCardId(index: number, cardId: string): string {
+    return `${cardId}-${index}`;
   }
 
   cardLabel(cardId: string): string {
@@ -1384,7 +1403,11 @@ export class GamesPageComponent implements OnInit {
     return card?.supertype === 'Energy' && (card.subtypes ?? []).includes('Basic');
   }
 
-  private runGameMutation(request: Observable<GameResponse>, successMessage: string): void {
+  private runGameMutation(
+    request: Observable<GameResponse>,
+    successMessage: string,
+    errorMessage = 'La accion no se pudo completar. Revisa fase, turno, mazos validos y cartas disponibles.'
+  ): void {
     this.error = '';
     this.message = '';
     request.subscribe({
@@ -1395,7 +1418,7 @@ export class GamesPageComponent implements OnInit {
         this.loadGames();
       },
       error: (error) => {
-        this.error = this.backendError(error, 'La accion no se pudo completar. Revisa fase, turno, mazos validos y cartas disponibles.');
+        this.error = this.backendError(error, errorMessage);
       }
     });
   }
