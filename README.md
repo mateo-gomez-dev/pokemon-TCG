@@ -219,11 +219,12 @@ curl -X POST http://localhost:8080/api/games/1/actions/play-basic-pokemon \
   -H "Content-Type: application/json" \
   -d '{
     "playerId": 1,
-    "cardId": "xy1-1"
+    "cardId": "xy1-1",
+    "targetZone": "BENCH"
   }'
 ```
 
-Esta accion solo funciona en fase `MAIN`, requiere que la carta este en la mano, que exista en `cards`, que sea `supertype = Pokémon`, que tenga subtype `Basic` y que la banca tenga menos de 5 Pokemon. El backend mueve la carta de `handCardIds` a `benchCardIds` y registra `PLAY_BASIC_POKEMON`.
+Esta accion solo funciona en fase `MAIN`, requiere que la carta este en la mano, que exista en `cards`, que sea `supertype = Pokémon` y que tenga subtype `Basic`. El campo opcional `targetZone` permite elegir `ACTIVE` o `BENCH`; si no se envia, el backend usa `ACTIVE` cuando el jugador no tiene Pokemon activo y `BENCH` cuando ya tiene activo. Cada Pokemon en juego recibe un `pokemonInstanceId`, por lo que dos copias de la misma carta mantienen energia y daño separados. Los campos legacy `activePokemonCardId` y `benchCardIds` se siguen devolviendo como datos derivados.
 
 Unir una Energia Basica desde la mano a un Pokemon en banca:
 
@@ -233,11 +234,24 @@ curl -X POST http://localhost:8080/api/games/1/actions/attach-energy \
   -d '{
     "playerId": 1,
     "energyCardId": "xy1-132",
-    "targetPokemonCardId": "xy1-1"
+    "pokemonInstanceId": "uuid-de-la-instancia"
   }'
 ```
 
-Esta accion solo funciona en fase `MAIN`, requiere que la Energia este en la mano, que exista en `cards`, que sea `supertype = Energy`, que tenga subtype `Basic`, que el Pokemon objetivo este en `benchCardIds` y que el jugador no haya unido Energia este turno. El backend mueve la Energia de `handCardIds` a `attachedEnergyCardIdsByPokemonCardId`, marca `energyAttachedThisTurn = true` y registra `ATTACH_ENERGY`.
+Esta accion solo funciona en fase `MAIN`, requiere que la Energia este en la mano, que exista en `cards`, que sea `supertype = Energy`, que tenga subtype `Basic`, que el Pokemon objetivo exista en juego y que el jugador no haya unido Energia este turno. Preferir `pokemonInstanceId`; `targetPokemonCardId` se mantiene como compatibilidad solo cuando hay una unica instancia con ese `cardId`. El backend mueve la Energia de `handCardIds` a los mapas por instancia, actualiza los mapas legacy por `cardId`, marca `energyAttachedThisTurn = true` y registra `ATTACH_ENERGY`.
+
+Promover un Pokemon de banca a activo cuando no hay activo:
+
+```bash
+curl -X POST http://localhost:8080/api/games/1/actions/promote-active \
+  -H "Content-Type: application/json" \
+  -d '{
+    "playerId": 1,
+    "pokemonInstanceId": "uuid-de-la-instancia"
+  }'
+```
+
+Esta accion solo funciona si el jugador no tiene Pokemon activo y el `pokemonInstanceId` pertenece a un Pokemon en banca. El backend cambia la zona de esa instancia a `ACTIVE`, actualiza `activePokemonInstanceId` y registra `PROMOTE_ACTIVE`.
 
 Listar partidas:
 
@@ -288,6 +302,7 @@ El frontend usa los endpoints reales del backend:
 - `POST /api/games/{id}/actions/end-turn`
 - `POST /api/games/{id}/actions/play-basic-pokemon`
 - `POST /api/games/{id}/actions/attach-energy`
+- `POST /api/games/{id}/actions/promote-active`
 
 No hay endpoints `/api/tarjetas` implementados actualmente. Conviene mantener unificado el backend en `/api/cards`.
 

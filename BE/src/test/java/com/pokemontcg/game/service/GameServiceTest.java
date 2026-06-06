@@ -19,7 +19,10 @@ import com.pokemontcg.game.persistence.GameLogEntity;
 import com.pokemontcg.game.persistence.GamePlayerEntity;
 import com.pokemontcg.game.persistence.GameRepository;
 import com.pokemontcg.game.persistence.GameStatus;
+import com.pokemontcg.game.persistence.PokemonInPlay;
+import com.pokemontcg.game.persistence.PokemonZone;
 import com.pokemontcg.game.persistence.TurnPhase;
+import com.pokemontcg.game.dto.PromoteActiveRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
 import org.junit.jupiter.api.Test;
@@ -208,6 +211,8 @@ class GameServiceTest {
             assertThat(player.prizeCardsRemaining()).isEqualTo(6);
             assertThat(player.deckRemaining()).isEqualTo(47);
             assertThat(player.discardSize()).isZero();
+            assertThat(player.activePokemonCardId()).isNull();
+            assertThat(player.benchCardIds()).isEmpty();
         });
         assertThat(response.logs()).hasSize(2);
         assertThat(response.logs().get(1).actionType()).isEqualTo("START_GAME");
@@ -383,7 +388,7 @@ class GameServiceTest {
     }
 
     @Test
-    void playBasicPokemonMovesCardFromHandToBench() {
+    void playBasicPokemonMovesCardFromHandToActiveWhenPlayerHasNoActivePokemon() {
         GameEntity game = activeGameInMainPhaseWithBasicPokemonInHand();
         CardEntity basicPokemon = card("xy1-1", "Pikachu", "Pokémon", List.of("Basic"));
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
@@ -397,11 +402,57 @@ class GameServiceTest {
         GameResponse response = gameService.playBasicPokemon(1L, new PlayBasicPokemonRequest(100L, "xy1-1"));
 
         assertThat(response.players().getFirst().handSize()).isEqualTo(7);
-        assertThat(response.players().getFirst().benchSize()).isEqualTo(1);
-        assertThat(response.players().getFirst().benchCardIds()).containsExactly("xy1-1");
+        assertThat(response.players().getFirst().activePokemonCardId()).isEqualTo("xy1-1");
+        assertThat(response.players().getFirst().benchSize()).isZero();
+        assertThat(response.players().getFirst().benchCardIds()).isEmpty();
         assertThat(response.players().getFirst().handCardIds()).doesNotContain("xy1-1");
         assertThat(response.logs()).hasSize(2);
         assertThat(response.logs().get(1).actionType()).isEqualTo("PLAY_BASIC_POKEMON");
+        assertThat(response.logs().get(1).message()).contains("Pokemon activo");
+    }
+
+    @Test
+    void playBasicPokemonMovesCardFromHandToBenchWhenPlayerAlreadyHasActivePokemon() {
+        GameEntity game = activeGameInMainPhaseWithBasicPokemonInHand();
+        game.getPlayers().getFirst().setActivePokemonCardId("xy1-active");
+        CardEntity basicPokemon = card("xy1-1", "Pikachu", "Pokémon", List.of("Basic"));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(basicPokemon));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> {
+            GameEntity savedGame = invocation.getArgument(0);
+            savedGame.getLogs().get(1).setId(2000L);
+            return savedGame;
+        });
+
+        GameResponse response = gameService.playBasicPokemon(1L, new PlayBasicPokemonRequest(100L, "xy1-1"));
+
+        assertThat(response.players().getFirst().activePokemonCardId()).isEqualTo("xy1-active");
+        assertThat(response.players().getFirst().benchCardIds()).containsExactly("xy1-1");
+        assertThat(response.players().getFirst().benchCardIds()).doesNotContain("xy1-active");
+        assertThat(response.players().getFirst().handCardIds()).doesNotContain("xy1-1");
+        assertThat(response.logs().get(1).message()).contains("banca");
+    }
+
+    @Test
+    void playBasicPokemonCreatesDifferentInstancesForRepeatedCard() {
+        GameEntity game = activeGameInMainPhaseWithBasicPokemonInHand();
+        game.getPlayers().getFirst().getHandCardIds().add("xy1-1");
+        CardEntity basicPokemon = card("xy1-1", "Pikachu", "Pokémon", List.of("Basic"));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(basicPokemon));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse firstResponse = gameService.playBasicPokemon(1L, new PlayBasicPokemonRequest(100L, "xy1-1"));
+        GameResponse secondResponse = gameService.playBasicPokemon(1L, new PlayBasicPokemonRequest(100L, "xy1-1"));
+
+        String activeInstanceId = secondResponse.players().getFirst().activePokemonInstanceId();
+        String benchInstanceId = secondResponse.players().getFirst().benchPokemon().getFirst().instanceId();
+        assertThat(firstResponse.players().getFirst().activePokemonCardId()).isEqualTo("xy1-1");
+        assertThat(secondResponse.players().getFirst().activePokemonCardId()).isEqualTo("xy1-1");
+        assertThat(secondResponse.players().getFirst().benchPokemon().getFirst().cardId()).isEqualTo("xy1-1");
+        assertThat(activeInstanceId).isNotBlank();
+        assertThat(benchInstanceId).isNotBlank();
+        assertThat(activeInstanceId).isNotEqualTo(benchInstanceId);
     }
 
     @Test
@@ -501,6 +552,7 @@ class GameServiceTest {
     @Test
     void playBasicPokemonFailsWhenBenchIsFull() {
         GameEntity game = activeGameInMainPhaseWithBasicPokemonInHand();
+        game.getPlayers().getFirst().setActivePokemonCardId("xy1-active");
         game.getPlayers().getFirst().setBenchCardIds(new java.util.ArrayList<>(List.of("b1", "b2", "b3", "b4", "b5")));
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
 
@@ -511,8 +563,8 @@ class GameServiceTest {
     }
 
     @Test
-    void attachEnergyMovesBasicEnergyFromHandToTargetPokemon() {
-        GameEntity game = activeGameWithBenchAndEnergyInHand();
+    void attachEnergyMovesBasicEnergyFromHandToActivePokemon() {
+        GameEntity game = activeGameWithActiveAndEnergyInHand();
         CardEntity energy = card("xy1-132", "Lightning Energy", "Energy", List.of("Basic"));
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
         when(cardRepository.findById("xy1-132")).thenReturn(Optional.of(energy));
@@ -531,6 +583,48 @@ class GameServiceTest {
                 .containsEntry("xy1-1", List.of("xy1-132"));
         assertThat(response.logs()).hasSize(2);
         assertThat(response.logs().get(1).actionType()).isEqualTo("ATTACH_ENERGY");
+    }
+
+    @Test
+    void attachEnergyMovesBasicEnergyFromHandToBenchPokemon() {
+        GameEntity game = activeGameWithBenchAndEnergyInHand();
+        CardEntity energy = card("xy1-132", "Lightning Energy", "Energy", List.of("Basic"));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("xy1-132")).thenReturn(Optional.of(energy));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "xy1-132", "xy1-3"));
+
+        assertThat(response.players().getFirst().attachedEnergyCardIdsByPokemonCardId())
+                .containsEntry("xy1-3", List.of("xy1-132"));
+    }
+
+    @Test
+    void attachEnergyUsesPokemonInstanceIdWhenRepeatedCardsAreInPlay() {
+        GameEntity game = activeGameWithRepeatedPokemonInstancesAndEnergyInHand();
+        CardEntity energy = card("xy1-132", "Lightning Energy", "Energy", List.of("Basic"));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("xy1-132")).thenReturn(Optional.of(energy));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "xy1-132", null, "bench-copy"));
+
+        assertThat(response.players().getFirst().attachedEnergyCardIdsByPokemonInstanceId())
+                .containsEntry("bench-copy", List.of("xy1-132"));
+        assertThat(response.players().getFirst().attachedEnergyCardIdsByPokemonInstanceId())
+                .containsEntry("active-copy", List.of());
+    }
+
+    @Test
+    void attachEnergyRejectsAmbiguousCardIdWhenRepeatedCardsAreInPlay() {
+        GameEntity game = activeGameWithRepeatedPokemonInstancesAndEnergyInHand();
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+
+        assertThatThrownBy(() -> gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "xy1-132", "xy1-1")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("pokemonInstanceId")
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
     @Test
@@ -628,11 +722,22 @@ class GameServiceTest {
     }
 
     @Test
-    void attachEnergyFailsWhenTargetPokemonIsNotOnBench() {
+    void attachEnergyFailsWhenTargetPokemonIsNotInPlay() {
         GameEntity game = activeGameWithBenchAndEnergyInHand();
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
 
         assertThatThrownBy(() -> gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "xy1-132", "xy1-99")))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void attachEnergyFailsWhenPokemonInstanceIsNotInPlay() {
+        GameEntity game = activeGameWithBenchAndEnergyInHand();
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+
+        assertThatThrownBy(() -> gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "xy1-132", null, "missing-instance")))
                 .isInstanceOf(ResponseStatusException.class)
                 .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
                 .isEqualTo(HttpStatus.CONFLICT);
@@ -667,6 +772,22 @@ class GameServiceTest {
         assertThat(response.currentPlayerId()).isEqualTo(200L);
         assertThat(response.players().get(1).damageByPokemonCardId()).containsEntry("xy1-2", 30);
         assertThat(response.logs().get(1).actionType()).isEqualTo("ATTACK");
+    }
+
+    @Test
+    void attackAppliesDamageOnlyToDefenderActiveInstance() {
+        GameEntity game = activeGameWithRepeatedDefenderInstancesReadyForAttack();
+        CardEntity attacker = pokemonWithAttack("xy1-1", "Pikachu", 60, "Gnaw", 1, "30");
+        CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
+        defender.setHp(70);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(List.of("xy1-1", "xy1-2"))).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Gnaw"));
+
+        assertThat(response.players().get(1).damageByPokemonInstanceId()).containsEntry("defender-active", 30);
+        assertThat(response.players().get(1).damageByPokemonInstanceId()).containsEntry("defender-bench", 0);
     }
 
     @Test
@@ -717,7 +838,7 @@ class GameServiceTest {
     @Test
     void attackFailsWhenPlayerHasNoActivePokemon() {
         GameEntity game = activeGameReadyForAttack();
-        game.getPlayers().getFirst().getBenchCardIds().clear();
+        game.getPlayers().getFirst().setActivePokemonCardId(null);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
 
         assertThatThrownBy(() -> gameService.attack(1L, new AttackRequest(100L, "Gnaw")))
@@ -730,7 +851,7 @@ class GameServiceTest {
     @Test
     void attackFailsWhenOpponentHasNoActivePokemon() {
         GameEntity game = activeGameReadyForAttack();
-        game.getPlayers().get(1).getBenchCardIds().clear();
+        game.getPlayers().get(1).setActivePokemonCardId(null);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
 
         assertThatThrownBy(() -> gameService.attack(1L, new AttackRequest(100L, "Gnaw")))
@@ -787,6 +908,8 @@ class GameServiceTest {
         GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Gnaw"));
 
         assertThat(response.players().getFirst().prizeCardsRemaining()).isEqualTo(5);
+        assertThat(response.players().get(1).activePokemonCardId()).isNull();
+        assertThat(response.players().get(1).benchCardIds()).contains("xy1-4");
         assertThat(response.players().get(1).benchCardIds()).doesNotContain("xy1-2");
         assertThat(response.players().get(1).discardCardIds()).contains("xy1-2", "xy1-132");
         assertThat(response.players().get(1).damageByPokemonCardId()).doesNotContainKey("xy1-2");
@@ -809,6 +932,47 @@ class GameServiceTest {
         assertThat(response.finishedAt()).isNotNull();
         assertThat(response.players().getFirst().prizeCardsRemaining()).isZero();
         assertThat(response.players().getFirst().handCardIds()).contains("last-prize");
+    }
+
+    @Test
+    void promoteActiveMovesBenchPokemonToActiveWhenPlayerHasNoActivePokemon() {
+        GameEntity game = activeGame();
+        game.getPlayers().getFirst().getPokemonInPlay().add(pokemonInPlay("bench-copy", "xy1-1", PokemonZone.BENCH));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.promoteActive(1L, new PromoteActiveRequest(100L, "bench-copy"));
+
+        assertThat(response.players().getFirst().activePokemonInstanceId()).isEqualTo("bench-copy");
+        assertThat(response.players().getFirst().activePokemon().cardId()).isEqualTo("xy1-1");
+        assertThat(response.players().getFirst().benchPokemon()).isEmpty();
+        assertThat(response.logs().get(1).actionType()).isEqualTo("PROMOTE_ACTIVE");
+    }
+
+    @Test
+    void promoteActiveFailsWhenPlayerAlreadyHasActivePokemon() {
+        GameEntity game = activeGame();
+        game.getPlayers().getFirst().getPokemonInPlay().add(pokemonInPlay("active-copy", "xy1-1", PokemonZone.ACTIVE));
+        game.getPlayers().getFirst().setActivePokemonInstanceId("active-copy");
+        game.getPlayers().getFirst().getPokemonInPlay().add(pokemonInPlay("bench-copy", "xy1-2", PokemonZone.BENCH));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+
+        assertThatThrownBy(() -> gameService.promoteActive(1L, new PromoteActiveRequest(100L, "bench-copy")))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void promoteActiveFailsWhenInstanceDoesNotBelongToPlayer() {
+        GameEntity game = activeGame();
+        game.getPlayers().get(1).getPokemonInPlay().add(pokemonInPlay("other-player-copy", "xy1-2", PokemonZone.BENCH));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+
+        assertThatThrownBy(() -> gameService.promoteActive(1L, new PromoteActiveRequest(100L, "other-player-copy")))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
     }
 
     private DeckEntity deck(Long id, String name) {
@@ -901,22 +1065,61 @@ class GameServiceTest {
         return game;
     }
 
-    private GameEntity activeGameWithBenchAndEnergyInHand() {
+    private GameEntity activeGameWithActiveAndEnergyInHand() {
         GameEntity game = activeGame();
         game.setTurnPhase(TurnPhase.MAIN);
         game.getPlayers().getFirst().getHandCardIds().add("xy1-132");
-        game.getPlayers().getFirst().getBenchCardIds().add("xy1-1");
+        game.getPlayers().getFirst().setActivePokemonCardId("xy1-1");
+        return game;
+    }
+
+    private GameEntity activeGameWithBenchAndEnergyInHand() {
+        GameEntity game = activeGameWithActiveAndEnergyInHand();
+        game.getPlayers().getFirst().getBenchCardIds().add("xy1-3");
+        return game;
+    }
+
+    private GameEntity activeGameWithRepeatedPokemonInstancesAndEnergyInHand() {
+        GameEntity game = activeGame();
+        game.setTurnPhase(TurnPhase.MAIN);
+        GamePlayerEntity player = game.getPlayers().getFirst();
+        player.getHandCardIds().add("xy1-132");
+        player.getPokemonInPlay().add(pokemonInPlay("active-copy", "xy1-1", PokemonZone.ACTIVE));
+        player.getPokemonInPlay().add(pokemonInPlay("bench-copy", "xy1-1", PokemonZone.BENCH));
+        player.setActivePokemonInstanceId("active-copy");
         return game;
     }
 
     private GameEntity activeGameReadyForAttack() {
         GameEntity game = activeGame();
         game.setTurnPhase(TurnPhase.MAIN);
-        game.getPlayers().getFirst().getBenchCardIds().add("xy1-1");
+        game.getPlayers().getFirst().setActivePokemonCardId("xy1-1");
+        game.getPlayers().getFirst().getBenchCardIds().add("xy1-3");
         game.getPlayers().getFirst().getAttachedEnergyCardIdsByPokemonCardId()
                 .put("xy1-1", new java.util.ArrayList<>(List.of("xy1-132")));
-        game.getPlayers().get(1).getBenchCardIds().add("xy1-2");
+        game.getPlayers().get(1).setActivePokemonCardId("xy1-2");
+        game.getPlayers().get(1).getBenchCardIds().add("xy1-4");
         return game;
+    }
+
+    private GameEntity activeGameWithRepeatedDefenderInstancesReadyForAttack() {
+        GameEntity game = activeGame();
+        game.setTurnPhase(TurnPhase.MAIN);
+        GamePlayerEntity attacker = game.getPlayers().getFirst();
+        PokemonInPlay attackerActive = pokemonInPlay("attacker-active", "xy1-1", PokemonZone.ACTIVE);
+        attackerActive.getAttachedEnergyCardIds().add("xy1-132");
+        attacker.getPokemonInPlay().add(attackerActive);
+        attacker.setActivePokemonInstanceId("attacker-active");
+
+        GamePlayerEntity defender = game.getPlayers().get(1);
+        defender.getPokemonInPlay().add(pokemonInPlay("defender-active", "xy1-2", PokemonZone.ACTIVE));
+        defender.getPokemonInPlay().add(pokemonInPlay("defender-bench", "xy1-2", PokemonZone.BENCH));
+        defender.setActivePokemonInstanceId("defender-active");
+        return game;
+    }
+
+    private PokemonInPlay pokemonInPlay(String instanceId, String cardId, PokemonZone zone) {
+        return new PokemonInPlay(instanceId, cardId, zone);
     }
 
     private List<String> numberedCards(String prefix, int quantity) {

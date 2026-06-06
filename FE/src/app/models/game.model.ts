@@ -11,11 +11,17 @@ export interface GameActionRequest {
 
 export interface PlayBasicPokemonRequest extends GameActionRequest {
   cardId: string;
+  targetZone?: 'ACTIVE' | 'BENCH' | string;
 }
 
 export interface AttachEnergyRequest extends GameActionRequest {
   energyCardId: string;
-  targetPokemonCardId: string;
+  targetPokemonCardId?: string;
+  pokemonInstanceId?: string;
+}
+
+export interface PromoteActiveRequest extends GameActionRequest {
+  pokemonInstanceId: string;
 }
 
 export interface AttackRequest extends GameActionRequest {
@@ -47,13 +53,30 @@ export interface GamePlayerResponse {
   benchSize: number;
   discardSize: number;
   energyAttachedThisTurn: boolean;
+  activePokemonInstanceId?: string;
+  activePokemonCardId?: string;
+  activePokemon?: PokemonInPlayResponse;
+  benchPokemon: PokemonInPlayResponse[];
   deckCardIds: string[];
   handCardIds: string[];
   prizeCardIds: string[];
   benchCardIds: string[];
+  attachedEnergyCardIdsByPokemonInstanceId: Record<string, string[]>;
   attachedEnergyCardIdsByPokemonCardId: Record<string, string[]>;
+  damageByPokemonInstanceId: Record<string, number>;
   damageByPokemonCardId: Record<string, number>;
   discardCardIds: string[];
+}
+
+export interface PokemonInPlayResponse {
+  instanceId: string;
+  cardId: string;
+  name: string;
+  hp?: number;
+  damage: number;
+  remainingHp: number;
+  attachedEnergyCardIds: string[];
+  attachedEnergyCount: number;
 }
 
 export interface GameLogResponse {

@@ -15,11 +15,17 @@ public record GamePlayerResponse(
         int benchSize,
         int discardSize,
         boolean energyAttachedThisTurn,
+        String activePokemonInstanceId,
+        String activePokemonCardId,
+        PokemonInPlayResponse activePokemon,
+        List<PokemonInPlayResponse> benchPokemon,
         List<String> deckCardIds,
         List<String> handCardIds,
         List<String> prizeCardIds,
         List<String> benchCardIds,
+        Map<String, List<String>> attachedEnergyCardIdsByPokemonInstanceId,
         Map<String, List<String>> attachedEnergyCardIdsByPokemonCardId,
+        Map<String, Integer> damageByPokemonInstanceId,
         Map<String, Integer> damageByPokemonCardId,
         List<String> discardCardIds
 ) {

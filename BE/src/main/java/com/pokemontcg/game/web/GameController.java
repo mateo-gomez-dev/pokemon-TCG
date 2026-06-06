@@ -7,6 +7,7 @@ import com.pokemontcg.game.dto.GameActionRequest;
 import com.pokemontcg.game.dto.GameResponse;
 import com.pokemontcg.game.dto.JoinGameRequest;
 import com.pokemontcg.game.dto.PlayBasicPokemonRequest;
+import com.pokemontcg.game.dto.PromoteActiveRequest;
 import com.pokemontcg.game.service.GameService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -65,15 +66,21 @@ public class GameController {
     }
 
     @PostMapping("/{id}/actions/play-basic-pokemon")
-    @Operation(summary = "Juega un Pokemon Basico desde la mano a la banca")
+    @Operation(summary = "Juega un Pokemon Basico desde la mano al activo o la banca")
     public GameResponse playBasicPokemon(@PathVariable Long id, @Valid @RequestBody PlayBasicPokemonRequest request) {
         return gameService.playBasicPokemon(id, request);
     }
 
     @PostMapping("/{id}/actions/attach-energy")
-    @Operation(summary = "Une una Energia Basica desde la mano a un Pokemon en banca")
+    @Operation(summary = "Une una Energia Basica desde la mano a un Pokemon en juego")
     public GameResponse attachEnergy(@PathVariable Long id, @Valid @RequestBody AttachEnergyRequest request) {
         return gameService.attachEnergy(id, request);
+    }
+
+    @PostMapping("/{id}/actions/promote-active")
+    @Operation(summary = "Promueve un Pokemon de banca al puesto activo")
+    public GameResponse promoteActive(@PathVariable Long id, @Valid @RequestBody PromoteActiveRequest request) {
+        return gameService.promoteActive(id, request);
     }
 
     @PostMapping("/{id}/actions/attack")

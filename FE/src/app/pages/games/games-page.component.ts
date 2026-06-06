@@ -1,14 +1,20 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnInit } from '@angular/core';
+import { Component, HostListener, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Observable } from 'rxjs';
 
 import { Card, CardAttack } from '../../models/card.model';
 import { DeckResponse } from '../../models/deck.model';
-import { GamePlayerResponse, GameResponse } from '../../models/game.model';
+import { GamePlayerResponse, GameResponse, PokemonInPlayResponse } from '../../models/game.model';
 import { CardsService } from '../../services/cards.service';
 import { DecksService } from '../../services/decks.service';
 import { GamesService } from '../../services/games.service';
+
+interface SelectedCardDetail {
+  cardId: string;
+  card?: Card;
+  pokemon?: PokemonInPlayResponse;
+}
 
 @Component({
   selector: 'app-games-page',
@@ -134,9 +140,9 @@ import { GamesService } from '../../services/games.service';
 
             <section class="bench-row opponent-bench" *ngIf="opponentPlayer as opponent">
               <div class="slot bench-slot" *ngFor="let slot of benchSlots; trackBy: trackByIndex">
-                <ng-container *ngIf="opponent.benchCardIds[slot] as cardId; else emptyOpponentBench">
-                  <article class="tcg-card bench-card" [class.glow]="slot === 0">
-                    <ng-container *ngTemplateOutlet="cardFace; context: { cardId: cardId, player: opponent, compact: true }"></ng-container>
+                <ng-container *ngIf="opponent.benchPokemon[slot] as pokemon; else emptyOpponentBench">
+                  <article class="tcg-card bench-card" (click)="openCardDetail(pokemon.cardId, pokemon)">
+                    <ng-container *ngTemplateOutlet="cardFace; context: { cardId: pokemon.cardId, player: opponent, compact: true, pokemon: pokemon }"></ng-container>
                   </article>
                 </ng-container>
                 <ng-template #emptyOpponentBench><span>Banca</span></ng-template>
@@ -151,9 +157,9 @@ import { GamesService } from '../../services/games.service';
 
               <div class="active-column">
                 <div class="active-slot opponent-active" *ngIf="opponentPlayer as opponent">
-                  <ng-container *ngIf="visualActiveCardId(opponent) as cardId; else noOpponentActive">
-                    <article class="tcg-card active-card" [class.glow]="opponent.id === selectedGame.currentPlayerId">
-                      <ng-container *ngTemplateOutlet="cardFace; context: { cardId: cardId, player: opponent, compact: false }"></ng-container>
+                  <ng-container *ngIf="opponent.activePokemon as pokemon; else noOpponentActive">
+                    <article class="tcg-card active-card" [class.glow]="opponent.id === selectedGame.currentPlayerId" (click)="openCardDetail(pokemon.cardId, pokemon)">
+                      <ng-container *ngTemplateOutlet="cardFace; context: { cardId: pokemon.cardId, player: opponent, compact: false, pokemon: pokemon }"></ng-container>
                     </article>
                   </ng-container>
                   <ng-template #noOpponentActive><div class="empty-active">Activo rival</div></ng-template>
@@ -165,10 +171,16 @@ import { GamesService } from '../../services/games.service';
                   <span>{{ turnText }}</span>
                 </div>
 
-                <div class="active-slot player-active" *ngIf="boardPlayer as player">
-                  <ng-container *ngIf="visualActiveCardId(player) as cardId; else noPlayerActive">
-                    <article class="tcg-card active-card" [class.glow]="player.id === selectedGame.currentPlayerId">
-                      <ng-container *ngTemplateOutlet="cardFace; context: { cardId: cardId, player: player, compact: false }"></ng-container>
+                <div
+                  class="active-slot player-active"
+                  *ngIf="boardPlayer as player"
+                  [class.drop-target]="canDropToActive()"
+                  (dragover)="onActiveDragOver($event)"
+                  (drop)="onActiveDrop($event)"
+                >
+                  <ng-container *ngIf="player.activePokemon as pokemon; else noPlayerActive">
+                    <article class="tcg-card active-card" [class.glow]="player.id === selectedGame.currentPlayerId" (click)="openCardDetail(pokemon.cardId, pokemon)">
+                      <ng-container *ngTemplateOutlet="cardFace; context: { cardId: pokemon.cardId, player: player, compact: false, pokemon: pokemon }"></ng-container>
                     </article>
                   </ng-container>
                   <ng-template #noPlayerActive><div class="empty-active">Tu activo visual</div></ng-template>
@@ -183,10 +195,22 @@ import { GamesService } from '../../services/games.service';
             </section>
 
             <section class="bench-row player-bench" *ngIf="boardPlayer as player">
-              <div class="slot bench-slot" *ngFor="let slot of benchSlots; trackBy: trackByIndex">
-                <ng-container *ngIf="player.benchCardIds[slot] as cardId; else emptyPlayerBench">
-                  <article class="tcg-card bench-card" [class.glow]="slot === 0">
-                    <ng-container *ngTemplateOutlet="cardFace; context: { cardId: cardId, player: player, compact: true }"></ng-container>
+              <div
+                class="slot bench-slot"
+                *ngFor="let slot of benchSlots; trackBy: trackByIndex"
+                [class.drop-target]="canDropToBench()"
+                (dragover)="onBenchDragOver($event)"
+                (drop)="onBenchDrop($event)"
+              >
+                <ng-container *ngIf="player.benchPokemon[slot] as pokemon; else emptyPlayerBench">
+                  <article
+                    class="tcg-card bench-card"
+                    [draggable]="player.id === currentPlayer?.id"
+                    (dragstart)="onBenchPokemonDragStart($event, pokemon)"
+                    (dragend)="clearDragState()"
+                    (click)="openCardDetail(pokemon.cardId, pokemon)"
+                  >
+                    <ng-container *ngTemplateOutlet="cardFace; context: { cardId: pokemon.cardId, player: player, compact: true, pokemon: pokemon }"></ng-container>
                   </article>
                 </ng-container>
                 <ng-template #emptyPlayerBench><span>Banca</span></ng-template>
@@ -212,6 +236,10 @@ import { GamesService } from '../../services/games.service';
                 *ngFor="let cardId of player.handCardIds; let i = index; trackBy: trackByIndexedCardId"
                 [style.transform]="handTransform(i, player.handCardIds.length)"
                 [class.selectable]="isBasicPokemon(cardId) || isBasicEnergy(cardId)"
+                [draggable]="isBasicPokemon(cardId)"
+                (dragstart)="onHandCardDragStart($event, cardId)"
+                (dragend)="clearDragState()"
+                (click)="openCardDetail(cardId)"
               >
                 <ng-container *ngTemplateOutlet="cardFace; context: { cardId: cardId, player: player, compact: true }"></ng-container>
               </article>
@@ -250,13 +278,27 @@ import { GamesService } from '../../services/games.service';
             </label>
             <label>
               Objetivo
-              <select [(ngModel)]="selectedTargetPokemonCardId">
+              <select [(ngModel)]="selectedTargetPokemonInstanceId">
                 <option value="">Seleccionar</option>
-                <option *ngFor="let cardId of currentPlayer.benchCardIds; trackBy: trackByIndexedCardId" [value]="cardId">{{ cardLabel(cardId) }}</option>
+                <option *ngFor="let target of energyTargetPokemon; trackBy: trackByPokemonInstanceId" [value]="target.instanceId">
+                  {{ pokemonOptionLabel(target) }}
+                </option>
               </select>
             </label>
-            <button type="button" (click)="attachEnergy()" [disabled]="selectedGame.status !== 'ACTIVE' || selectedGame.turnPhase !== 'MAIN' || !selectedEnergyCardId || !selectedTargetPokemonCardId">
+            <button type="button" (click)="attachEnergy()" [disabled]="selectedGame.status !== 'ACTIVE' || selectedGame.turnPhase !== 'MAIN' || !selectedEnergyCardId || !selectedTargetPokemonInstanceId">
               Unir energia
+            </button>
+            <label *ngIf="canPromoteActive()">
+              Promover a activo
+              <select [(ngModel)]="selectedPromotionPokemonInstanceId">
+                <option value="">Seleccionar</option>
+                <option *ngFor="let pokemon of currentPlayer.benchPokemon; trackBy: trackByPokemonInstanceId" [value]="pokemon.instanceId">
+                  {{ pokemonOptionLabel(pokemon) }}
+                </option>
+              </select>
+            </label>
+            <button type="button" *ngIf="canPromoteActive()" (click)="promoteActive()" [disabled]="!selectedPromotionPokemonInstanceId">
+              Promover activo
             </button>
             <label>
               Ataque
@@ -290,8 +332,11 @@ import { GamesService } from '../../services/games.service';
                 <article *ngFor="let player of selectedGame.players; trackBy: trackByPlayerId">
                   <strong>{{ player.playerName }} #{{ player.id }}</strong>
                   <p>Deck {{ player.deckRemaining }} - Mano {{ player.handSize }} - Premios {{ player.prizeCardsRemaining }} - Descarte {{ player.discardSize }}</p>
+                  <p>Activo instancia: {{ player.activePokemonInstanceId || '-' }}</p>
+                  <p>Activo carta: {{ player.activePokemon?.cardId || player.activePokemonCardId || '-' }}</p>
                   <p>Mano IDs: {{ player.handCardIds.join(', ') || '-' }}</p>
-                  <p>Banca IDs: {{ player.benchCardIds.join(', ') || '-' }}</p>
+                  <p>Banca instancias: {{ pokemonInstanceIds(player.benchPokemon) }}</p>
+                  <p>Banca cartas: {{ player.benchCardIds.join(', ') || '-' }}</p>
                 </article>
               </section>
               <section>
@@ -315,7 +360,32 @@ import { GamesService } from '../../services/games.service';
         </ng-template>
       </section>
 
-      <ng-template #cardFace let-cardId="cardId" let-player="player" let-compact="compact">
+      <section class="card-modal-backdrop" *ngIf="selectedCardDetail as detail" (click)="closeCardDetail()">
+        <article class="card-modal" (click)="$event.stopPropagation()">
+          <button type="button" class="modal-close" (click)="closeCardDetail()">X</button>
+          <img *ngIf="cardDetailImage(detail) as detailImage" [src]="detailImage" [alt]="cardDetailName(detail)" />
+          <div>
+            <p class="eyebrow">Detalle de carta</p>
+            <h2>{{ cardDetailName(detail) }}</h2>
+            <p class="muted">ID {{ detail.cardId }}</p>
+            <p>{{ cardDetailType(detail) }}</p>
+            <p *ngIf="detail.card?.hp">HP {{ detail.card?.hp }}</p>
+            <p *ngIf="detail.card?.types?.length">Tipos: {{ detail.card?.types?.join(', ') }}</p>
+            <p *ngIf="detail.pokemon">Daño actual: {{ detail.pokemon.damage }} - Energías: {{ detail.pokemon.attachedEnergyCount }}</p>
+            <section *ngIf="detail.card?.attacks?.length">
+              <h3>Ataques</h3>
+              <article *ngFor="let attack of detail.card?.attacks; trackBy: trackByAttackName">
+                <strong>{{ attackLabel(attack) }}</strong>
+                <p *ngIf="attack.text">{{ attack.text }}</p>
+              </article>
+            </section>
+            <p *ngIf="detail.card?.weaknesses">Debilidad: {{ detail.card?.weaknesses | json }}</p>
+            <p *ngIf="detail.card?.resistances">Resistencia: {{ detail.card?.resistances | json }}</p>
+          </div>
+        </article>
+      </section>
+
+      <ng-template #cardFace let-cardId="cardId" let-player="player" let-compact="compact" let-pokemon="pokemon">
         <ng-container *ngIf="cardImageUrl(cardId) as imageUrl; else cardPlaceholder">
           <img [src]="imageUrl" [alt]="cardName(cardId)" />
         </ng-container>
@@ -329,11 +399,11 @@ import { GamesService } from '../../services/games.service';
         <div class="card-caption" *ngIf="!compact">
           <strong>{{ cardName(cardId) }}</strong>
           <span>{{ cardType(cardId) }}</span>
-          <span *ngIf="cardHp(cardId)">HP {{ remainingHp(player, cardId) }}/{{ cardHp(cardId) }}</span>
-          <small>Energia: {{ attachedEnergyCount(player, cardId) }}</small>
+          <span *ngIf="cardHp(cardId)">HP {{ remainingHp(player, cardId, pokemon) }}/{{ cardHp(cardId) }}</span>
+          <small>Energia: {{ attachedEnergyCount(player, cardId, pokemon) }}</small>
         </div>
-        <span class="energy-badge" *ngIf="attachedEnergyCount(player, cardId) > 0">{{ attachedEnergyCount(player, cardId) }}</span>
-        <span class="damage-badge" *ngIf="damageFor(player, cardId) > 0">{{ damageFor(player, cardId) }} dmg</span>
+        <span class="energy-badge" *ngIf="attachedEnergyCount(player, cardId, pokemon) > 0">{{ attachedEnergyCount(player, cardId, pokemon) }}</span>
+        <span class="damage-badge" *ngIf="damageFor(player, cardId, pokemon) > 0">{{ damageFor(player, cardId, pokemon) }} dmg</span>
       </ng-template>
     </main>
   `,
@@ -669,6 +739,12 @@ import { GamesService } from '../../services/games.service';
       padding: 0.4rem;
     }
 
+    .drop-target {
+      background: rgba(220, 252, 231, 0.66);
+      border-color: #22c55e;
+      box-shadow: inset 0 0 0 3px rgba(34, 197, 94, 0.24), 0 12px 28px rgba(34, 197, 94, 0.22);
+    }
+
     .slot > span,
     .empty-active {
       color: rgba(51, 65, 85, 0.55);
@@ -979,6 +1055,69 @@ import { GamesService } from '../../services/games.service';
       margin-bottom: 0.6rem;
     }
 
+    .card-modal-backdrop {
+      align-items: center;
+      background: rgba(15, 23, 42, 0.58);
+      display: flex;
+      inset: 0;
+      justify-content: center;
+      padding: 1rem;
+      position: fixed;
+      z-index: 100;
+    }
+
+    .card-modal {
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid rgba(186, 230, 253, 0.9);
+      border-radius: 28px;
+      box-shadow: 0 28px 80px rgba(15, 23, 42, 0.35);
+      display: grid;
+      gap: 1.25rem;
+      grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+      max-height: min(88vh, 760px);
+      max-width: min(92vw, 820px);
+      overflow: auto;
+      padding: 1.25rem;
+      position: relative;
+    }
+
+    .card-modal img {
+      border-radius: 18px;
+      box-shadow: 0 18px 36px rgba(15, 23, 42, 0.24);
+      width: 100%;
+    }
+
+    .card-modal h2 {
+      margin-bottom: 0.3rem;
+    }
+
+    .card-modal section {
+      display: grid;
+      gap: 0.55rem;
+      margin-top: 0.8rem;
+    }
+
+    .card-modal article {
+      border-top: 1px solid #e0f2fe;
+      padding-top: 0.55rem;
+    }
+
+    .modal-close {
+      align-items: center;
+      background: #0f172a;
+      border: 0;
+      border-radius: 50%;
+      color: white;
+      display: flex;
+      font-weight: 900;
+      height: 34px;
+      justify-content: center;
+      position: absolute;
+      right: 0.8rem;
+      top: 0.8rem;
+      width: 34px;
+    }
+
     @media (max-width: 1180px) {
       .game-shell,
       .board-wrap {
@@ -1056,6 +1195,16 @@ import { GamesService } from '../../services/games.service';
         display: grid;
         min-width: 0;
       }
+
+      .card-modal {
+        grid-template-columns: 1fr;
+        max-width: 96vw;
+      }
+
+      .card-modal img {
+        margin: 0 auto;
+        max-width: 240px;
+      }
     }
   `]
 })
@@ -1072,8 +1221,12 @@ export class GamesPageComponent implements OnInit {
   joinDeckId?: number;
   selectedBasicCardId = '';
   selectedEnergyCardId = '';
-  selectedTargetPokemonCardId = '';
+  selectedTargetPokemonInstanceId = '';
+  selectedPromotionPokemonInstanceId = '';
   selectedAttackName = '';
+  draggedHandCardId = '';
+  draggedBenchPokemonInstanceId = '';
+  selectedCardDetail: SelectedCardDetail | null = null;
   error = '';
   message = '';
 
@@ -1126,6 +1279,14 @@ export class GamesPageComponent implements OnInit {
     return this.currentPlayer?.handCardIds.filter((cardId) => this.isBasicEnergy(cardId)) ?? [];
   }
 
+  get energyTargetPokemon(): PokemonInPlayResponse[] {
+    if (!this.currentPlayer) {
+      return [];
+    }
+    return [this.currentPlayer.activePokemon, ...this.currentPlayer.benchPokemon]
+      .filter((pokemon): pokemon is PokemonInPlayResponse => !!pokemon);
+  }
+
   get activePokemonAttacks(): CardAttack[] {
     const activeCardId = this.activePokemonCardId;
     if (!activeCardId) {
@@ -1135,11 +1296,11 @@ export class GamesPageComponent implements OnInit {
   }
 
   get activePokemonCardId(): string {
-    return this.currentPlayer ? this.visualActiveCardId(this.currentPlayer) : '';
+    return this.currentPlayer?.activePokemon?.cardId ?? '';
   }
 
   get opponentActivePokemonCardId(): string {
-    return this.opponentPlayer ? this.visualActiveCardId(this.opponentPlayer) : '';
+    return this.opponentPlayer?.activePokemon?.cardId ?? '';
   }
 
   canDrawCard(): boolean {
@@ -1160,9 +1321,41 @@ export class GamesPageComponent implements OnInit {
       && !!selectedGame.currentPlayerId
       && !!currentPlayer
       && !!opponentPlayer
-      && !!this.visualActiveCardId(currentPlayer)
-      && !!this.visualActiveCardId(opponentPlayer)
+      && !!currentPlayer.activePokemon
+      && !!opponentPlayer.activePokemon
       && !!this.selectedAttackName;
+  }
+
+  canPromoteActive(): boolean {
+    return !!this.selectedGame
+      && this.selectedGame.status === 'ACTIVE'
+      && !!this.currentPlayer
+      && !this.currentPlayer.activePokemon
+      && this.currentPlayer.benchPokemon.length > 0;
+  }
+
+  canDropToActive(): boolean {
+    return !!this.selectedGame
+      && this.selectedGame.status === 'ACTIVE'
+      && this.selectedGame.turnPhase === 'MAIN'
+      && !!this.currentPlayer
+      && !this.currentPlayer.activePokemon
+      && (!!this.draggedBenchPokemonInstanceId || (!!this.draggedHandCardId && this.isBasicPokemon(this.draggedHandCardId)));
+  }
+
+  canDropToBench(): boolean {
+    return !!this.selectedGame
+      && this.selectedGame.status === 'ACTIVE'
+      && this.selectedGame.turnPhase === 'MAIN'
+      && !!this.currentPlayer
+      && !!this.draggedHandCardId
+      && this.isBasicPokemon(this.draggedHandCardId)
+      && this.currentPlayer.benchPokemon.length < this.benchSlots.length;
+  }
+
+  @HostListener('document:keydown.escape')
+  closeCardDetail(): void {
+    this.selectedCardDetail = null;
   }
 
   ngOnInit(): void {
@@ -1265,26 +1458,41 @@ export class GamesPageComponent implements OnInit {
     if (!this.selectedGame || !this.currentPlayer || !this.selectedBasicCardId) {
       return;
     }
+    const targetZone = this.currentPlayer.activePokemon ? 'BENCH' : 'ACTIVE';
     this.runGameMutation(
       this.gamesService.playBasicPokemon(this.selectedGame.id, {
         playerId: this.currentPlayer.id,
-        cardId: this.selectedBasicCardId
+        cardId: this.selectedBasicCardId,
+        targetZone
       }),
-      'Pokemon jugado a banca.'
+      'Pokemon jugado.'
     );
   }
 
   attachEnergy(): void {
-    if (!this.selectedGame || !this.currentPlayer || !this.selectedEnergyCardId || !this.selectedTargetPokemonCardId) {
+    if (!this.selectedGame || !this.currentPlayer || !this.selectedEnergyCardId || !this.selectedTargetPokemonInstanceId) {
       return;
     }
     this.runGameMutation(
       this.gamesService.attachEnergy(this.selectedGame.id, {
         playerId: this.currentPlayer.id,
         energyCardId: this.selectedEnergyCardId,
-        targetPokemonCardId: this.selectedTargetPokemonCardId
+        pokemonInstanceId: this.selectedTargetPokemonInstanceId
       }),
       'Energia unida.'
+    );
+  }
+
+  promoteActive(): void {
+    if (!this.selectedGame || !this.currentPlayer || !this.selectedPromotionPokemonInstanceId) {
+      return;
+    }
+    this.runGameMutation(
+      this.gamesService.promoteActive(this.selectedGame.id, {
+        playerId: this.currentPlayer.id,
+        pokemonInstanceId: this.selectedPromotionPokemonInstanceId
+      }),
+      'Pokemon promovido a activo.'
     );
   }
 
@@ -1332,6 +1540,10 @@ export class GamesPageComponent implements OnInit {
     return attack.name || String(index);
   }
 
+  trackByPokemonInstanceId(_index: number, pokemon: PokemonInPlayResponse): string {
+    return pokemon.instanceId;
+  }
+
   trackByIndex(index: number): number {
     return index;
   }
@@ -1357,13 +1569,19 @@ export class GamesPageComponent implements OnInit {
     return this.cardsById[cardId]?.hp ?? 0;
   }
 
-  damageFor(player: GamePlayerResponse, pokemonCardId: string): number {
+  damageFor(player: GamePlayerResponse, pokemonCardId: string, pokemon?: PokemonInPlayResponse): number {
+    if (pokemon) {
+      return pokemon.damage;
+    }
     return player.damageByPokemonCardId?.[pokemonCardId] ?? 0;
   }
 
-  remainingHp(player: GamePlayerResponse, pokemonCardId: string): number {
+  remainingHp(player: GamePlayerResponse, pokemonCardId: string, pokemon?: PokemonInPlayResponse): number {
+    if (pokemon) {
+      return pokemon.remainingHp;
+    }
     const hp = this.cardHp(pokemonCardId);
-    return Math.max(0, hp - this.damageFor(player, pokemonCardId));
+    return Math.max(0, hp - this.damageFor(player, pokemonCardId, pokemon));
   }
 
   attackLabel(attack: CardAttack): string {
@@ -1377,12 +1595,114 @@ export class GamesPageComponent implements OnInit {
     return card?.imageSmallUrl ?? card?.imageSmall ?? card?.imageUrl ?? card?.images?.small ?? card?.imageLargeUrl ?? card?.images?.large ?? '';
   }
 
-  attachedEnergyCount(player: GamePlayerResponse, pokemonCardId: string): number {
+  attachedEnergyCount(player: GamePlayerResponse, pokemonCardId: string, pokemon?: PokemonInPlayResponse): number {
+    if (pokemon) {
+      return pokemon.attachedEnergyCount;
+    }
     return player.attachedEnergyCardIdsByPokemonCardId[pokemonCardId]?.length ?? 0;
   }
 
-  visualActiveCardId(player: GamePlayerResponse): string {
-    return player.benchCardIds[0] ?? '';
+  pokemonOptionLabel(pokemon: PokemonInPlayResponse): string {
+    const zone = pokemon.instanceId === this.currentPlayer?.activePokemonInstanceId ? 'Activo' : 'Banca';
+    return `${this.cardName(pokemon.cardId)} (${zone})`;
+  }
+
+  pokemonInstanceIds(pokemon: PokemonInPlayResponse[]): string {
+    return pokemon.length ? pokemon.map((item) => item.instanceId).join(', ') : '-';
+  }
+
+  openCardDetail(cardId: string, pokemon?: PokemonInPlayResponse): void {
+    this.selectedCardDetail = {
+      cardId,
+      card: this.cardsById[cardId],
+      pokemon
+    };
+  }
+
+  cardDetailImage(detail: SelectedCardDetail): string {
+    const card = detail.card;
+    return card?.imageLargeUrl ?? card?.images?.large ?? card?.imageSmallUrl ?? card?.imageSmall ?? card?.imageUrl ?? card?.images?.small ?? '';
+  }
+
+  cardDetailName(detail: SelectedCardDetail): string {
+    return detail.card?.name ?? detail.cardId;
+  }
+
+  cardDetailType(detail: SelectedCardDetail): string {
+    const card = detail.card;
+    return [card?.supertype, ...(card?.subtypes ?? [])].filter(Boolean).join(' / ') || 'Carta';
+  }
+
+  onHandCardDragStart(event: DragEvent, cardId: string): void {
+    if (!this.isBasicPokemon(cardId)) {
+      event.preventDefault();
+      return;
+    }
+    this.draggedHandCardId = cardId;
+    this.draggedBenchPokemonInstanceId = '';
+    event.dataTransfer?.setData('text/plain', cardId);
+  }
+
+  onBenchPokemonDragStart(event: DragEvent, pokemon: PokemonInPlayResponse): void {
+    this.draggedBenchPokemonInstanceId = pokemon.instanceId;
+    this.draggedHandCardId = '';
+    event.dataTransfer?.setData('text/plain', pokemon.instanceId);
+  }
+
+  clearDragState(): void {
+    this.draggedHandCardId = '';
+    this.draggedBenchPokemonInstanceId = '';
+  }
+
+  onActiveDragOver(event: DragEvent): void {
+    if (this.canDropToActive()) {
+      event.preventDefault();
+    }
+  }
+
+  onBenchDragOver(event: DragEvent): void {
+    if (this.canDropToBench()) {
+      event.preventDefault();
+    }
+  }
+
+  onActiveDrop(event: DragEvent): void {
+    event.preventDefault();
+    if (!this.selectedGame || !this.currentPlayer || !this.canDropToActive()) {
+      this.clearDragState();
+      return;
+    }
+    if (this.draggedBenchPokemonInstanceId) {
+      this.selectedPromotionPokemonInstanceId = this.draggedBenchPokemonInstanceId;
+      this.promoteActive();
+    } else if (this.draggedHandCardId) {
+      this.playBasicPokemonToZone(this.draggedHandCardId, 'ACTIVE');
+    }
+    this.clearDragState();
+  }
+
+  onBenchDrop(event: DragEvent): void {
+    event.preventDefault();
+    if (!this.canDropToBench() || !this.draggedHandCardId) {
+      this.clearDragState();
+      return;
+    }
+    this.playBasicPokemonToZone(this.draggedHandCardId, 'BENCH');
+    this.clearDragState();
+  }
+
+  private playBasicPokemonToZone(cardId: string, targetZone: 'ACTIVE' | 'BENCH'): void {
+    if (!this.selectedGame || !this.currentPlayer) {
+      return;
+    }
+    this.runGameMutation(
+      this.gamesService.playBasicPokemon(this.selectedGame.id, {
+        playerId: this.currentPlayer.id,
+        cardId,
+        targetZone
+      }),
+      targetZone === 'ACTIVE' ? 'Pokemon jugado como activo.' : 'Pokemon jugado a banca.'
+    );
   }
 
   handTransform(index: number, total: number): string {
@@ -1437,7 +1757,8 @@ export class GamesPageComponent implements OnInit {
     this.selectedGame = game;
     this.selectedBasicCardId = '';
     this.selectedEnergyCardId = '';
-    this.selectedTargetPokemonCardId = '';
+    this.selectedTargetPokemonInstanceId = '';
+    this.selectedPromotionPokemonInstanceId = '';
     this.selectedAttackName = '';
   }
 

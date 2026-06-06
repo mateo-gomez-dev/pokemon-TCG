@@ -14,12 +14,16 @@ import com.pokemontcg.game.dto.GameLogResponse;
 import com.pokemontcg.game.dto.GamePlayerResponse;
 import com.pokemontcg.game.dto.GameResponse;
 import com.pokemontcg.game.dto.JoinGameRequest;
+import com.pokemontcg.game.dto.PokemonInPlayResponse;
 import com.pokemontcg.game.dto.PlayBasicPokemonRequest;
+import com.pokemontcg.game.dto.PromoteActiveRequest;
 import com.pokemontcg.game.persistence.GameEntity;
 import com.pokemontcg.game.persistence.GameLogEntity;
 import com.pokemontcg.game.persistence.GamePlayerEntity;
 import com.pokemontcg.game.persistence.GameRepository;
 import com.pokemontcg.game.persistence.GameStatus;
+import com.pokemontcg.game.persistence.PokemonInPlay;
+import com.pokemontcg.game.persistence.PokemonZone;
 import com.pokemontcg.game.persistence.TurnPhase;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -31,12 +35,15 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 import static com.pokemontcg.card.domain.CardRules.BASIC_SUBTYPE;
 import static com.pokemontcg.card.domain.CardRules.ENERGY_SUPERTYPE;
@@ -170,16 +177,27 @@ public class GameService {
 
         GamePlayerEntity player = findPlayer(game, request.playerId());
         assertCardInList(player.getHandCardIds(), request.cardId(), "La carta no esta en la mano del jugador");
-        if (player.getBenchCardIds().size() >= MAX_BENCH_SIZE) {
+        PokemonZone targetZone = playTargetZone(player, request.targetZone());
+        if (targetZone == PokemonZone.BENCH && benchPokemon(player).size() >= MAX_BENCH_SIZE) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "La banca ya tiene " + MAX_BENCH_SIZE + " Pokemon");
+        }
+        if (targetZone == PokemonZone.ACTIVE && activePokemon(player) != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "El jugador ya tiene Pokemon activo");
         }
 
         CardEntity card = findCardOrBadRequest(request.cardId(), "Carta no encontrada");
         assertBasicPokemon(card);
 
         player.getHandCardIds().remove(request.cardId());
-        player.getBenchCardIds().add(request.cardId());
-        addLog(game, player.getId(), "PLAY_BASIC_POKEMON", "Jugador " + player.getPlayerName() + " jugo " + card.getName() + " en la banca.");
+        PokemonInPlay pokemon = new PokemonInPlay(UUID.randomUUID().toString(), request.cardId(), targetZone);
+        player.getPokemonInPlay().add(pokemon);
+        if (targetZone == PokemonZone.ACTIVE) {
+            player.setActivePokemonInstanceId(pokemon.getInstanceId());
+            addLog(game, player.getId(), "PLAY_BASIC_POKEMON", "Jugador " + player.getPlayerName() + " coloco " + card.getName() + " como Pokemon activo.");
+        } else {
+            addLog(game, player.getId(), "PLAY_BASIC_POKEMON", "Jugador " + player.getPlayerName() + " jugo " + card.getName() + " en la banca.");
+        }
+        syncDerivedPokemonFields(player);
 
         return toResponse(gameRepository.save(game));
     }
@@ -191,7 +209,7 @@ public class GameService {
 
         GamePlayerEntity player = findPlayer(game, request.playerId());
         assertCardInList(player.getHandCardIds(), request.energyCardId(), "La energia no esta en la mano del jugador");
-        assertCardInList(player.getBenchCardIds(), request.targetPokemonCardId(), "El Pokemon objetivo no esta en la banca del jugador");
+        PokemonInPlay targetPokemon = resolvePokemonTarget(player, request.pokemonInstanceId(), request.targetPokemonCardId());
         if (player.isEnergyAttachedThisTurn()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "El jugador ya unio una energia este turno");
         }
@@ -200,11 +218,33 @@ public class GameService {
         assertBasicEnergy(energyCard);
 
         player.getHandCardIds().remove(request.energyCardId());
-        player.getAttachedEnergyCardIdsByPokemonCardId()
-                .computeIfAbsent(request.targetPokemonCardId(), ignored -> new ArrayList<>())
-                .add(request.energyCardId());
+        targetPokemon.getAttachedEnergyCardIds().add(request.energyCardId());
         player.setEnergyAttachedThisTurn(true);
-        addLog(game, player.getId(), "ATTACH_ENERGY", "Jugador " + player.getPlayerName() + " unio " + energyCard.getName() + " a " + request.targetPokemonCardId() + ".");
+        syncDerivedPokemonFields(player);
+        addLog(game, player.getId(), "ATTACH_ENERGY", "Jugador " + player.getPlayerName() + " unio " + energyCard.getName() + " a " + targetPokemon.getInstanceId() + ".");
+
+        return toResponse(gameRepository.save(game));
+    }
+
+    @Transactional
+    public GameResponse promoteActive(Long gameId, PromoteActiveRequest request) {
+        GameEntity game = findGame(gameId);
+        assertActiveGame(game);
+
+        GamePlayerEntity player = findPlayer(game, request.playerId());
+        if (activePokemon(player) != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "El jugador ya tiene Pokemon activo");
+        }
+
+        PokemonInPlay pokemon = findPokemonByInstanceId(player, request.pokemonInstanceId(), "El Pokemon no pertenece al jugador");
+        if (pokemon.getZone() != PokemonZone.BENCH) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "El Pokemon no esta en banca");
+        }
+
+        pokemon.setZone(PokemonZone.ACTIVE);
+        player.setActivePokemonInstanceId(pokemon.getInstanceId());
+        syncDerivedPokemonFields(player);
+        addLog(game, player.getId(), "PROMOTE_ACTIVE", "Jugador " + player.getPlayerName() + " promovio " + pokemon.getCardId() + " como Pokemon activo.");
 
         return toResponse(gameRepository.save(game));
     }
@@ -216,33 +256,36 @@ public class GameService {
 
         GamePlayerEntity attacker = findPlayer(game, request.playerId());
         GamePlayerEntity defender = findOtherPlayer(game, request.playerId());
-        String attackerActiveCardId = activePokemonCardId(attacker, "El jugador actual no tiene Pokemon activo");
-        String defenderActiveCardId = activePokemonCardId(defender, "El rival no tiene Pokemon activo");
+        PokemonInPlay attackerActive = requireActivePokemon(attacker, "El jugador actual no tiene Pokemon activo");
+        PokemonInPlay defenderActive = requireActivePokemon(defender, "El rival no tiene Pokemon activo");
+        String attackerActiveCardId = attackerActive.getCardId();
+        String defenderActiveCardId = defenderActive.getCardId();
 
         Map<String, CardEntity> cardsById = findCardsById(List.of(attackerActiveCardId, defenderActiveCardId));
         CardEntity attackerCard = findCard(cardsById, attackerActiveCardId, "Pokemon atacante no encontrado");
         CardEntity defenderCard = findCard(cardsById, defenderActiveCardId, "Pokemon defensor no encontrado");
         JsonNode attackNode = findAttack(attackerCard, request.attackName());
         int requiredEnergy = requiredEnergy(attackNode);
-        int attachedEnergy = attacker.getAttachedEnergyCardIdsByPokemonCardId()
-                .getOrDefault(attackerActiveCardId, List.of())
-                .size();
+        int attachedEnergy = attackerActive.getAttachedEnergyCardIds().size();
         if (attachedEnergy < requiredEnergy) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Energia insuficiente para atacar");
         }
 
         int damage = attackDamage(attackNode);
-        int accumulatedDamage = defender.getDamageByPokemonCardId().getOrDefault(defenderActiveCardId, 0) + damage;
-        defender.getDamageByPokemonCardId().put(defenderActiveCardId, accumulatedDamage);
+        int accumulatedDamage = defenderActive.getDamage() + damage;
+        defenderActive.setDamage(accumulatedDamage);
 
         String message = attacker.getPlayerName() + " ataco con " + attackerCard.getName()
                 + " usando " + attackNode.path("name").asText(request.attackName())
                 + " e hizo " + damage + " de dano.";
 
         if (accumulatedDamage >= (defenderCard.getHp() == null ? 0 : defenderCard.getHp())) {
-            knockOutActivePokemon(attacker, defender, defenderActiveCardId);
+            knockOutActivePokemon(attacker, defender, defenderActive);
             message += " " + defenderCard.getName() + " quedo KO.";
         }
+
+        syncDerivedPokemonFields(attacker);
+        syncDerivedPokemonFields(defender);
 
         if (attacker.getPrizeCardIds().isEmpty()) {
             game.setStatus(GameStatus.FINISHED);
@@ -272,8 +315,10 @@ public class GameService {
     }
 
     private GameEntity findGame(Long id) {
-        return gameRepository.findById(id)
+        GameEntity game = gameRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Partida no encontrada"));
+        ensurePokemonState(game);
+        return game;
     }
 
     private DeckEntity findDeckOrBadRequest(Long deckId) {
@@ -350,7 +395,11 @@ public class GameService {
     }
 
     private Map<String, CardEntity> findCardsById(List<String> cardIds) {
-        return cardRepository.findAllById(cardIds).stream()
+        Iterable<CardEntity> cards = cardRepository.findAllById(cardIds.stream().distinct().toList());
+        if (cards == null) {
+            return Map.of();
+        }
+        return StreamSupport.stream(cards.spliterator(), false)
                 .collect(Collectors.toMap(CardEntity::getId, Function.identity()));
     }
 
@@ -399,6 +448,9 @@ public class GameService {
         Collections.shuffle(deckCardIds);
         player.setHandCardIds(new ArrayList<>(deckCardIds.subList(0, INITIAL_HAND_SIZE)));
         player.setPrizeCardIds(new ArrayList<>(deckCardIds.subList(PRIZE_CARDS_START_INDEX, REMAINING_DECK_START_INDEX)));
+        player.setActivePokemonCardId(null);
+        player.setActivePokemonInstanceId(null);
+        player.setPokemonInPlay(new ArrayList<>());
         player.setBenchCardIds(new ArrayList<>());
         player.getAttachedEnergyCardIdsByPokemonCardId().clear();
         player.getDamageByPokemonCardId().clear();
@@ -419,11 +471,67 @@ public class GameService {
                 .toList();
     }
 
-    private String activePokemonCardId(GamePlayerEntity player, String errorMessage) {
-        if (player.getBenchCardIds().isEmpty()) {
+    private PokemonInPlay requireActivePokemon(GamePlayerEntity player, String errorMessage) {
+        PokemonInPlay pokemon = activePokemon(player);
+        if (pokemon == null) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, errorMessage);
         }
-        return player.getBenchCardIds().getFirst();
+        return pokemon;
+    }
+
+    private PokemonInPlay activePokemon(GamePlayerEntity player) {
+        if (player.getActivePokemonInstanceId() == null || player.getActivePokemonInstanceId().isBlank()) {
+            return null;
+        }
+        return player.getPokemonInPlay().stream()
+                .filter(pokemon -> player.getActivePokemonInstanceId().equals(pokemon.getInstanceId()))
+                .filter(pokemon -> pokemon.getZone() == PokemonZone.ACTIVE)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private List<PokemonInPlay> benchPokemon(GamePlayerEntity player) {
+        return player.getPokemonInPlay().stream()
+                .filter(pokemon -> pokemon.getZone() == PokemonZone.BENCH)
+                .toList();
+    }
+
+    private PokemonZone playTargetZone(GamePlayerEntity player, String requestedTargetZone) {
+        if (requestedTargetZone == null || requestedTargetZone.isBlank()) {
+            return activePokemon(player) == null ? PokemonZone.ACTIVE : PokemonZone.BENCH;
+        }
+        try {
+            return PokemonZone.valueOf(requestedTargetZone.toUpperCase());
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "targetZone debe ser ACTIVE o BENCH");
+        }
+    }
+
+    private PokemonInPlay resolvePokemonTarget(GamePlayerEntity player, String pokemonInstanceId, String targetPokemonCardId) {
+        if (pokemonInstanceId != null && !pokemonInstanceId.isBlank()) {
+            return findPokemonByInstanceId(player, pokemonInstanceId, "El Pokemon objetivo no esta en juego del jugador");
+        }
+        if (targetPokemonCardId == null || targetPokemonCardId.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Se debe enviar pokemonInstanceId");
+        }
+
+        List<PokemonInPlay> matches = player.getPokemonInPlay().stream()
+                .filter(pokemon -> targetPokemonCardId.equals(pokemon.getCardId()))
+                .toList();
+        if (matches.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "El Pokemon objetivo no esta en juego del jugador");
+        }
+        if (matches.size() > 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Hay mas de una instancia de esa carta en juego; usa pokemonInstanceId");
+        }
+        return matches.getFirst();
+    }
+
+    private PokemonInPlay findPokemonByInstanceId(GamePlayerEntity player, String pokemonInstanceId, String errorMessage) {
+        return player.getPokemonInPlay().stream()
+                .filter(pokemon -> pokemonInstanceId.equals(pokemon.getInstanceId()))
+                .findFirst()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, errorMessage));
     }
 
     private JsonNode findAttack(CardEntity card, String attackName) {
@@ -453,18 +561,84 @@ public class GameService {
         return matcher.find() ? Integer.parseInt(matcher.group()) : 0;
     }
 
-    private void knockOutActivePokemon(GamePlayerEntity attacker, GamePlayerEntity defender, String defenderActiveCardId) {
-        defender.getBenchCardIds().remove(defenderActiveCardId);
-        defender.getDiscardCardIds().add(defenderActiveCardId);
-        List<String> attachedEnergy = defender.getAttachedEnergyCardIdsByPokemonCardId().remove(defenderActiveCardId);
-        if (attachedEnergy != null) {
-            defender.getDiscardCardIds().addAll(attachedEnergy);
+    private void knockOutActivePokemon(GamePlayerEntity attacker, GamePlayerEntity defender, PokemonInPlay defenderActive) {
+        if (defenderActive.getInstanceId().equals(defender.getActivePokemonInstanceId())) {
+            defender.setActivePokemonInstanceId(null);
         }
-        defender.getDamageByPokemonCardId().remove(defenderActiveCardId);
+        defender.getPokemonInPlay().removeIf(pokemon -> defenderActive.getInstanceId().equals(pokemon.getInstanceId()));
+        defender.getDiscardCardIds().add(defenderActive.getCardId());
+        defender.getDiscardCardIds().addAll(defenderActive.getAttachedEnergyCardIds());
 
         if (!attacker.getPrizeCardIds().isEmpty()) {
             attacker.getHandCardIds().add(attacker.getPrizeCardIds().removeFirst());
         }
+    }
+
+    private void ensurePokemonState(GameEntity game) {
+        game.getPlayers().forEach(this::ensurePokemonState);
+    }
+
+    private void ensurePokemonState(GamePlayerEntity player) {
+        if (player.getPokemonInPlay() == null) {
+            player.setPokemonInPlay(new ArrayList<>());
+        }
+        if (player.getAttachedEnergyCardIdsByPokemonCardId() == null) {
+            player.setAttachedEnergyCardIdsByPokemonCardId(new LinkedHashMap<>());
+        }
+        if (player.getDamageByPokemonCardId() == null) {
+            player.setDamageByPokemonCardId(new LinkedHashMap<>());
+        }
+        for (PokemonInPlay pokemon : player.getPokemonInPlay()) {
+            if (pokemon.getAttachedEnergyCardIds() == null) {
+                pokemon.setAttachedEnergyCardIds(new ArrayList<>());
+            }
+        }
+        if (player.getPokemonInPlay().isEmpty()) {
+            migrateLegacyPokemonState(player);
+        }
+        if (activePokemon(player) == null) {
+            player.getPokemonInPlay().stream()
+                    .filter(pokemon -> pokemon.getZone() == PokemonZone.ACTIVE)
+                    .findFirst()
+                    .ifPresent(pokemon -> player.setActivePokemonInstanceId(pokemon.getInstanceId()));
+        }
+        syncDerivedPokemonFields(player);
+    }
+
+    private void migrateLegacyPokemonState(GamePlayerEntity player) {
+        if (player.getActivePokemonCardId() != null && !player.getActivePokemonCardId().isBlank()) {
+            PokemonInPlay active = legacyPokemon(player, player.getActivePokemonCardId(), PokemonZone.ACTIVE);
+            player.getPokemonInPlay().add(active);
+            player.setActivePokemonInstanceId(active.getInstanceId());
+        }
+        for (String cardId : player.getBenchCardIds()) {
+            player.getPokemonInPlay().add(legacyPokemon(player, cardId, PokemonZone.BENCH));
+        }
+    }
+
+    private PokemonInPlay legacyPokemon(GamePlayerEntity player, String cardId, PokemonZone zone) {
+        PokemonInPlay pokemon = new PokemonInPlay(UUID.randomUUID().toString(), cardId, zone);
+        pokemon.setDamage(player.getDamageByPokemonCardId().getOrDefault(cardId, 0));
+        pokemon.setAttachedEnergyCardIds(new ArrayList<>(player.getAttachedEnergyCardIdsByPokemonCardId().getOrDefault(cardId, List.of())));
+        return pokemon;
+    }
+
+    private void syncDerivedPokemonFields(GamePlayerEntity player) {
+        PokemonInPlay active = activePokemon(player);
+        player.setActivePokemonCardId(active == null ? null : active.getCardId());
+        player.setBenchCardIds(benchPokemon(player).stream()
+                .map(PokemonInPlay::getCardId)
+                .collect(Collectors.toCollection(ArrayList::new)));
+
+        Map<String, List<String>> energyByCardId = new LinkedHashMap<>();
+        Map<String, Integer> damageByCardId = new LinkedHashMap<>();
+        for (PokemonInPlay pokemon : player.getPokemonInPlay()) {
+            energyByCardId.computeIfAbsent(pokemon.getCardId(), ignored -> new ArrayList<>())
+                    .addAll(pokemon.getAttachedEnergyCardIds());
+            damageByCardId.merge(pokemon.getCardId(), pokemon.getDamage(), Integer::sum);
+        }
+        player.setAttachedEnergyCardIdsByPokemonCardId(energyByCardId);
+        player.setDamageByPokemonCardId(damageByCardId);
     }
 
     private GameResponse toResponse(GameEntity game) {
@@ -488,7 +662,21 @@ public class GameService {
     }
 
     private GamePlayerResponse toPlayerResponse(GamePlayerEntity player) {
+        ensurePokemonState(player);
         DeckEntity deck = player.getDeck();
+        Map<String, CardEntity> cardsById = findCardsById(player.getPokemonInPlay().stream()
+                .map(PokemonInPlay::getCardId)
+                .distinct()
+                .toList());
+        PokemonInPlay active = activePokemon(player);
+        List<PokemonInPlayResponse> benchPokemon = benchPokemon(player).stream()
+                .map(pokemon -> toPokemonInPlayResponse(pokemon, cardsById))
+                .toList();
+        Map<String, List<String>> energyByInstanceId = player.getPokemonInPlay().stream()
+                .collect(Collectors.toMap(PokemonInPlay::getInstanceId, pokemon -> pokemon.getAttachedEnergyCardIds(), (first, second) -> first, LinkedHashMap::new));
+        Map<String, Integer> damageByInstanceId = player.getPokemonInPlay().stream()
+                .collect(Collectors.toMap(PokemonInPlay::getInstanceId, PokemonInPlay::getDamage, (first, second) -> first, LinkedHashMap::new));
+
         return new GamePlayerResponse(
                 player.getId(),
                 player.getPlayerName(),
@@ -501,13 +689,35 @@ public class GameService {
                 player.getBenchCardIds().size(),
                 player.getDiscardCardIds().size(),
                 player.isEnergyAttachedThisTurn(),
+                player.getActivePokemonInstanceId(),
+                player.getActivePokemonCardId(),
+                active == null ? null : toPokemonInPlayResponse(active, cardsById),
+                benchPokemon,
                 player.getDeckCardIds(),
                 player.getHandCardIds(),
                 player.getPrizeCardIds(),
                 player.getBenchCardIds(),
+                energyByInstanceId,
                 player.getAttachedEnergyCardIdsByPokemonCardId(),
+                damageByInstanceId,
                 player.getDamageByPokemonCardId(),
                 player.getDiscardCardIds()
+        );
+    }
+
+    private PokemonInPlayResponse toPokemonInPlayResponse(PokemonInPlay pokemon, Map<String, CardEntity> cardsById) {
+        CardEntity card = cardsById.get(pokemon.getCardId());
+        Integer hp = card == null ? null : card.getHp();
+        int remainingHp = hp == null ? 0 : Math.max(0, hp - pokemon.getDamage());
+        return new PokemonInPlayResponse(
+                pokemon.getInstanceId(),
+                pokemon.getCardId(),
+                card == null ? pokemon.getCardId() : card.getName(),
+                hp,
+                pokemon.getDamage(),
+                remainingHp,
+                pokemon.getAttachedEnergyCardIds(),
+                pokemon.getAttachedEnergyCardIds().size()
         );
     }
 

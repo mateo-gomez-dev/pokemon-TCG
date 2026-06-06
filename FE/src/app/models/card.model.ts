@@ -12,7 +12,10 @@ export interface Card {
   supertype?: string;
   subtypes?: string[];
   hp?: number;
+  types?: string[];
   attacks?: CardAttack[];
+  weaknesses?: unknown;
+  resistances?: unknown;
   imageUrl?: string;
   imageSmall?: string;
   imageSmallUrl?: string;

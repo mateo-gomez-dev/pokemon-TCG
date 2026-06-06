@@ -6,6 +6,10 @@ import jakarta.validation.constraints.NotNull;
 public record AttachEnergyRequest(
         @NotNull Long playerId,
         @NotBlank String energyCardId,
-        @NotBlank String targetPokemonCardId
+        String targetPokemonCardId,
+        String pokemonInstanceId
 ) {
+    public AttachEnergyRequest(Long playerId, String energyCardId, String targetPokemonCardId) {
+        this(playerId, energyCardId, targetPokemonCardId, null);
+    }
 }

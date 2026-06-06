@@ -56,6 +56,14 @@ public class GamePlayerEntity {
     @Column(columnDefinition = "jsonb")
     private List<String> benchCardIds = new ArrayList<>();
 
+    private String activePokemonCardId;
+
+    private String activePokemonInstanceId;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private List<PokemonInPlay> pokemonInPlay = new ArrayList<>();
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private Map<String, List<String>> attachedEnergyCardIdsByPokemonCardId = new HashMap<>();
@@ -141,6 +149,30 @@ public class GamePlayerEntity {
 
     public void setBenchCardIds(List<String> benchCardIds) {
         this.benchCardIds = benchCardIds;
+    }
+
+    public String getActivePokemonCardId() {
+        return activePokemonCardId;
+    }
+
+    public void setActivePokemonCardId(String activePokemonCardId) {
+        this.activePokemonCardId = activePokemonCardId;
+    }
+
+    public String getActivePokemonInstanceId() {
+        return activePokemonInstanceId;
+    }
+
+    public void setActivePokemonInstanceId(String activePokemonInstanceId) {
+        this.activePokemonInstanceId = activePokemonInstanceId;
+    }
+
+    public List<PokemonInPlay> getPokemonInPlay() {
+        return pokemonInPlay;
+    }
+
+    public void setPokemonInPlay(List<PokemonInPlay> pokemonInPlay) {
+        this.pokemonInPlay = pokemonInPlay;
     }
 
     public Map<String, List<String>> getAttachedEnergyCardIdsByPokemonCardId() {

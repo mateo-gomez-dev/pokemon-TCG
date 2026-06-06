@@ -9,7 +9,8 @@ import {
   GameActionRequest,
   GameResponse,
   JoinGameRequest,
-  PlayBasicPokemonRequest
+  PlayBasicPokemonRequest,
+  PromoteActiveRequest
 } from '../models/game.model';
 
 @Injectable({ providedIn: 'root' })
@@ -53,6 +54,10 @@ export class GamesService {
 
   attachEnergy(id: number, request: AttachEnergyRequest): Observable<GameResponse> {
     return this.http.post<GameResponse>(`${this.apiUrl}/${id}/actions/attach-energy`, request);
+  }
+
+  promoteActive(id: number, request: PromoteActiveRequest): Observable<GameResponse> {
+    return this.http.post<GameResponse>(`${this.apiUrl}/${id}/actions/promote-active`, request);
   }
 
   attack(id: number, request: AttackRequest): Observable<GameResponse> {
