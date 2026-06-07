@@ -62,27 +62,17 @@ class DeckValidatorTest {
     }
 
     @Test
-    void invalidDeckWhenMoreThanOneAceSpec() {
+    void xy1ModeDoesNotValidateAceSpecOrAsTactico() {
         DeckValidationResponse response = validator.validate(List.of(
                 deckCard(card("xy1-1", "Pikachu", "Pokémon", List.of("Basic")), 4),
                 deckCard(card("xy1-2", "Computer Search", "Trainer", List.of("Item", "ACE SPEC")), 2),
-                deckCard(card("xy1-3", "Lightning Energy", "Energy", List.of("Basic")), 54)
+                deckCard(card("xy1-3", "Busqueda Computarizada", "Trainer", List.of("Item", "AS TÁCTICO")), 2),
+                deckCard(card("xy1-4", "Lightning Energy", "Energy", List.of("Basic")), 52)
         ));
 
-        assertThat(response.valid()).isFalse();
-        assertThat(response.errors()).anyMatch(error -> error.contains("AS TACTICO"));
-    }
-
-    @Test
-    void invalidDeckWhenMoreThanOneAsTactico() {
-        DeckValidationResponse response = validator.validate(List.of(
-                deckCard(card("xy1-1", "Pikachu", "Pokémon", List.of("Basic")), 4),
-                deckCard(card("xy1-2", "Busqueda Computarizada", "Trainer", List.of("Item", "AS TÁCTICO")), 2),
-                deckCard(card("xy1-3", "Lightning Energy", "Energy", List.of("Basic")), 54)
-        ));
-
-        assertThat(response.valid()).isFalse();
-        assertThat(response.errors()).anyMatch(error -> error.contains("AS TACTICO"));
+        assertThat(response.valid()).isTrue();
+        assertThat(response.totalCards()).isEqualTo(60);
+        assertThat(response.errors()).noneMatch(error -> error.contains("AS TACTICO") || error.contains("ACE SPEC"));
     }
 
     @Test

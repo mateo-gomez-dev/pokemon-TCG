@@ -33,6 +33,7 @@ export interface GameResponse {
   status: 'WAITING' | 'SETUP' | 'ACTIVE' | 'FINISHED' | string;
   turnPhase: 'DRAW' | 'MAIN' | string;
   currentPlayerId?: number;
+  winnerPlayerId?: number;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;

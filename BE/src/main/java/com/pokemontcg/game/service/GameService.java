@@ -37,6 +37,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
@@ -127,8 +128,10 @@ public class GameService {
 
         game.setStatus(GameStatus.ACTIVE);
         game.setCurrentPlayerId(players.getFirst().getId());
+        game.setWinnerPlayerId(null);
         game.setTurnPhase(TurnPhase.DRAW);
         game.setStartedAt(LocalDateTime.now());
+        game.setFinishedAt(null);
 
         GameLogEntity log = new GameLogEntity();
         log.setPlayerId(null);
@@ -145,7 +148,10 @@ public class GameService {
 
         GamePlayerEntity player = findPlayer(game, request.playerId());
         if (player.getDeckCardIds().isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "El jugador no tiene cartas en el deck restante");
+            GamePlayerEntity winner = findOtherPlayer(game, request.playerId());
+            finishGame(game, winner, "VICTORY_DECK_OUT", "Jugador " + player.getPlayerName()
+                    + " intento robar sin cartas. " + winner.getPlayerName() + " gano por deck out.");
+            return toResponse(gameRepository.save(game));
         }
 
         String drawnCardId = player.getDeckCardIds().removeFirst();
@@ -275,30 +281,33 @@ public class GameService {
         int accumulatedDamage = defenderActive.getDamage() + damage;
         defenderActive.setDamage(accumulatedDamage);
 
-        String message = attacker.getPlayerName() + " ataco con " + attackerCard.getName()
+        addLog(game, attacker.getId(), "ATTACK", attacker.getPlayerName() + " ataco con " + attackerCard.getName()
                 + " usando " + attackNode.path("name").asText(request.attackName())
-                + " e hizo " + damage + " de dano.";
+                + " e hizo " + damage + " de dano.");
 
-        if (accumulatedDamage >= (defenderCard.getHp() == null ? 0 : defenderCard.getHp())) {
-            knockOutActivePokemon(attacker, defender, defenderActive);
-            message += " " + defenderCard.getName() + " quedo KO.";
+        boolean knockedOut = remainingHp(defenderCard, defenderActive) <= 0;
+        if (knockedOut) {
+            knockOutPokemon(game, defender, defenderActive, defenderCard);
+            int prizesToTake = prizeCountForKnockOut(defenderCard);
+            int prizesTaken = takePrizeCards(attacker, prizesToTake);
+            addLog(game, attacker.getId(), "TAKE_PRIZE", "Jugador " + attacker.getPlayerName()
+                    + " tomo " + prizesTaken + " premio" + (prizesTaken == 1 ? "" : "s") + ".");
         }
 
         syncDerivedPokemonFields(attacker);
         syncDerivedPokemonFields(defender);
 
-        if (attacker.getPrizeCardIds().isEmpty()) {
-            game.setStatus(GameStatus.FINISHED);
-            game.setFinishedAt(LocalDateTime.now());
-            game.setTurnPhase(null);
-            message += " " + attacker.getPlayerName() + " gano la partida.";
+        if (knockedOut && attacker.getPrizeCardIds().isEmpty()) {
+            finishGame(game, attacker, "VICTORY_PRIZES", "Jugador " + attacker.getPlayerName() + " gano al tomar todos sus premios.");
+        } else if (knockedOut && activePokemon(defender) == null && benchPokemon(defender).isEmpty()) {
+            finishGame(game, attacker, "VICTORY_NO_POKEMON", "Jugador " + attacker.getPlayerName()
+                    + " gano porque " + defender.getPlayerName() + " no tiene Pokemon en juego.");
         } else {
             game.setCurrentPlayerId(defender.getId());
             game.setTurnPhase(TurnPhase.DRAW);
             defender.setEnergyAttachedThisTurn(false);
         }
 
-        addLog(game, attacker.getId(), "ATTACK", message);
         return toResponse(gameRepository.save(game));
     }
 
@@ -348,6 +357,9 @@ public class GameService {
     }
 
     private void assertActiveGame(GameEntity game) {
+        if (game.getStatus() == GameStatus.FINISHED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "La partida ya finalizó.");
+        }
         if (game.getStatus() != GameStatus.ACTIVE) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "La partida debe estar ACTIVE");
         }
@@ -561,17 +573,48 @@ public class GameService {
         return matcher.find() ? Integer.parseInt(matcher.group()) : 0;
     }
 
-    private void knockOutActivePokemon(GamePlayerEntity attacker, GamePlayerEntity defender, PokemonInPlay defenderActive) {
-        if (defenderActive.getInstanceId().equals(defender.getActivePokemonInstanceId())) {
+    private int remainingHp(CardEntity card, PokemonInPlay pokemon) {
+        int hp = card.getHp() == null ? 0 : card.getHp();
+        return hp - pokemon.getDamage();
+    }
+
+    private void knockOutPokemon(GameEntity game, GamePlayerEntity defender, PokemonInPlay knockedOutPokemon, CardEntity knockedOutCard) {
+        List<String> attachedEnergyCardIds = new ArrayList<>(knockedOutPokemon.getAttachedEnergyCardIds());
+        if (knockedOutPokemon.getInstanceId().equals(defender.getActivePokemonInstanceId())) {
             defender.setActivePokemonInstanceId(null);
         }
-        defender.getPokemonInPlay().removeIf(pokemon -> defenderActive.getInstanceId().equals(pokemon.getInstanceId()));
-        defender.getDiscardCardIds().add(defenderActive.getCardId());
-        defender.getDiscardCardIds().addAll(defenderActive.getAttachedEnergyCardIds());
+        defender.getPokemonInPlay().removeIf(pokemon -> knockedOutPokemon.getInstanceId().equals(pokemon.getInstanceId()));
+        defender.getDiscardCardIds().add(knockedOutPokemon.getCardId());
+        defender.getDiscardCardIds().addAll(attachedEnergyCardIds);
+        addLog(game, defender.getId(), "KNOCK_OUT", knockedOutCard.getName() + " quedo KO. Se descartaron "
+                + (attachedEnergyCardIds.size() + 1) + " carta" + (attachedEnergyCardIds.isEmpty() ? "" : "s") + ".");
+    }
 
-        if (!attacker.getPrizeCardIds().isEmpty()) {
+    private int prizeCountForKnockOut(CardEntity knockedOutCard) {
+        return isExPokemon(knockedOutCard) ? 2 : 1;
+    }
+
+    private int takePrizeCards(GamePlayerEntity attacker, int requestedPrizeCards) {
+        int prizesTaken = Math.min(requestedPrizeCards, attacker.getPrizeCardIds().size());
+        for (int index = 0; index < prizesTaken; index++) {
             attacker.getHandCardIds().add(attacker.getPrizeCardIds().removeFirst());
         }
+        return prizesTaken;
+    }
+
+    private void finishGame(GameEntity game, GamePlayerEntity winner, String actionType, String message) {
+        game.setStatus(GameStatus.FINISHED);
+        game.setWinnerPlayerId(winner.getId());
+        game.setFinishedAt(LocalDateTime.now());
+        game.setTurnPhase(null);
+        addLog(game, winner.getId(), actionType, message);
+    }
+
+    private boolean isExPokemon(CardEntity card) {
+        if (hasSubtype(card, "EX")) {
+            return true;
+        }
+        return card.getName() != null && card.getName().toUpperCase(Locale.ROOT).contains("-EX");
     }
 
     private void ensurePokemonState(GameEntity game) {
@@ -647,6 +690,7 @@ public class GameService {
                 game.getStatus(),
                 game.getTurnPhase(),
                 game.getCurrentPlayerId(),
+                game.getWinnerPlayerId(),
                 game.getCreatedAt(),
                 game.getUpdatedAt(),
                 game.getStartedAt(),

@@ -33,6 +33,7 @@ interface SelectedCardDetail {
 
       <p *ngIf="error" class="game-alert error">{{ error }}</p>
       <p *ngIf="message" class="game-alert success">{{ message }}</p>
+      <p *ngIf="selectedGame?.status === 'FINISHED'" class="game-alert victory">{{ finishedGameText }}</p>
       <p *ngIf="validDecks.length === 0" class="game-alert warning">
         No hay mazos validos. Crea o valida un mazo desde Mazos antes de iniciar partidas.
       </p>
@@ -483,6 +484,14 @@ interface SelectedCardDetail {
       background: #fef3c7;
       border: 1px solid #fde68a;
       color: #92400e;
+      padding: 0.8rem 1rem;
+    }
+
+    .victory {
+      background: #dcfce7;
+      border: 1px solid #86efac;
+      color: #166534;
+      font-weight: 900;
       padding: 0.8rem 1rem;
     }
 
@@ -1264,11 +1273,21 @@ export class GamesPageComponent implements OnInit {
     if (!this.selectedGame) {
       return 'Sin partida seleccionada';
     }
+    if (this.selectedGame.status === 'FINISHED') {
+      return this.finishedGameText;
+    }
     if (this.selectedGame.status === 'WAITING') {
       return 'Esperando jugadores';
     }
     const playerName = this.currentPlayer?.playerName ?? `Jugador ${this.selectedGame.currentPlayerId ?? '-'}`;
     return `Turno de ${playerName}`;
+  }
+
+  get finishedGameText(): string {
+    if (!this.selectedGame || this.selectedGame.status !== 'FINISHED') {
+      return '';
+    }
+    return `Partida finalizada. Ganador: ${this.winnerName(this.selectedGame)}`;
   }
 
   get basicCardsInHand(): string[] {
@@ -1732,7 +1751,7 @@ export class GamesPageComponent implements OnInit {
     this.message = '';
     request.subscribe({
       next: (game) => {
-        this.message = successMessage;
+        this.message = this.mutationMessage(game, successMessage);
         this.setSelectedGame(game);
         this.refreshSelectedGame();
         this.loadGames();
@@ -1760,6 +1779,22 @@ export class GamesPageComponent implements OnInit {
     this.selectedTargetPokemonInstanceId = '';
     this.selectedPromotionPokemonInstanceId = '';
     this.selectedAttackName = '';
+  }
+
+  private mutationMessage(game: GameResponse, successMessage: string): string {
+    if (game.status === 'FINISHED') {
+      return `Partida finalizada. Ganador: ${this.winnerName(game)}`;
+    }
+    const latestLog = game.logs[game.logs.length - 1];
+    const latestLogShowsCombat = latestLog?.actionType === 'KNOCK_OUT' || latestLog?.actionType === 'TAKE_PRIZE';
+    return latestLogShowsCombat ? `${successMessage} ${latestLog.message}` : successMessage;
+  }
+
+  private winnerName(game: GameResponse): string {
+    if (!game.winnerPlayerId) {
+      return '-';
+    }
+    return game.players.find((player) => player.id === game.winnerPlayerId)?.playerName ?? `Jugador ${game.winnerPlayerId}`;
   }
 
   private backendError(error: unknown, fallback: string): string {

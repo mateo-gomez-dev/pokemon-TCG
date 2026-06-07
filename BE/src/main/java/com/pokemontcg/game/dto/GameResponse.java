@@ -11,6 +11,7 @@ public record GameResponse(
         GameStatus status,
         TurnPhase turnPhase,
         Long currentPlayerId,
+        Long winnerPlayerId,
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
         LocalDateTime startedAt,

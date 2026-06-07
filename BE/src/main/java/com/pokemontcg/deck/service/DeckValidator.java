@@ -34,7 +34,7 @@ public class DeckValidator {
         }
 
         validateCopiesByName(deckCards, errors);
-        validateAceSpec(deckCards, errors);
+        // XY1 no contiene ACE SPEC / AS TACTICO; esta regla queda disponible si se agregan otros sets.
         validateBasicPokemon(deckCards, errors);
 
         return new DeckValidationResponse(errors.isEmpty(), totalCards, errors);

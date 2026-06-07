@@ -323,15 +323,19 @@ class GameServiceTest {
     }
 
     @Test
-    void drawCardFailsWhenDeckIsEmpty() {
+    void drawCardWithEmptyDeckFinishesGameAndOpponentWins() {
         GameEntity game = activeGame();
         game.getPlayers().getFirst().setDeckCardIds(List.of());
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        assertThatThrownBy(() -> gameService.drawCard(1L, new GameActionRequest(100L)))
-                .isInstanceOf(ResponseStatusException.class)
-                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
-                .isEqualTo(HttpStatus.CONFLICT);
+        GameResponse response = gameService.drawCard(1L, new GameActionRequest(100L));
+
+        assertThat(response.status()).isEqualTo(GameStatus.FINISHED);
+        assertThat(response.winnerPlayerId()).isEqualTo(200L);
+        assertThat(response.finishedAt()).isNotNull();
+        assertThat(response.turnPhase()).isNull();
+        assertThat(response.logs()).extracting("actionType").contains("VICTORY_DECK_OUT");
     }
 
     @Test
@@ -762,7 +766,7 @@ class GameServiceTest {
         CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
         defender.setHp(70);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
-        when(cardRepository.findAllById(List.of("xy1-1", "xy1-2"))).thenReturn(List.of(attacker, defender));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
         when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Gnaw"));
@@ -770,6 +774,8 @@ class GameServiceTest {
         assertThat(response.status()).isEqualTo(GameStatus.ACTIVE);
         assertThat(response.turnPhase()).isEqualTo(TurnPhase.DRAW);
         assertThat(response.currentPlayerId()).isEqualTo(200L);
+        assertThat(response.players().get(1).activePokemonCardId()).isEqualTo("xy1-2");
+        assertThat(response.players().get(1).activePokemon().remainingHp()).isEqualTo(40);
         assertThat(response.players().get(1).damageByPokemonCardId()).containsEntry("xy1-2", 30);
         assertThat(response.logs().get(1).actionType()).isEqualTo("ATTACK");
     }
@@ -781,7 +787,7 @@ class GameServiceTest {
         CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
         defender.setHp(70);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
-        when(cardRepository.findAllById(List.of("xy1-1", "xy1-2"))).thenReturn(List.of(attacker, defender));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
         when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Gnaw"));
@@ -868,7 +874,7 @@ class GameServiceTest {
         CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
         defender.setHp(70);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
-        when(cardRepository.findAllById(List.of("xy1-1", "xy1-2"))).thenReturn(List.of(attacker, defender));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
 
         assertThatThrownBy(() -> gameService.attack(1L, new AttackRequest(100L, "Thunderbolt")))
                 .isInstanceOf(ResponseStatusException.class)
@@ -885,7 +891,7 @@ class GameServiceTest {
         CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
         defender.setHp(70);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
-        when(cardRepository.findAllById(List.of("xy1-1", "xy1-2"))).thenReturn(List.of(attacker, defender));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
 
         assertThatThrownBy(() -> gameService.attack(1L, new AttackRequest(100L, "Gnaw")))
                 .isInstanceOf(ResponseStatusException.class)
@@ -902,7 +908,7 @@ class GameServiceTest {
         CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
         defender.setHp(50);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
-        when(cardRepository.findAllById(List.of("xy1-1", "xy1-2"))).thenReturn(List.of(attacker, defender));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
         when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Gnaw"));
@@ -913,6 +919,33 @@ class GameServiceTest {
         assertThat(response.players().get(1).benchCardIds()).doesNotContain("xy1-2");
         assertThat(response.players().get(1).discardCardIds()).contains("xy1-2", "xy1-132");
         assertThat(response.players().get(1).damageByPokemonCardId()).doesNotContainKey("xy1-2");
+        assertThat(response.players().get(1).attachedEnergyCardIdsByPokemonInstanceId().values())
+                .allSatisfy(energyIds -> assertThat(energyIds).doesNotContain("xy1-132"));
+        assertThat(response.status()).isEqualTo(GameStatus.ACTIVE);
+        assertThat(response.winnerPlayerId()).isNull();
+        assertThat(response.currentPlayerId()).isEqualTo(200L);
+        assertThat(response.logs()).anySatisfy(log -> assertThat(log.actionType()).isEqualTo("KNOCK_OUT"));
+        assertThat(response.logs()).anySatisfy(log -> assertThat(log.actionType()).isEqualTo("TAKE_PRIZE"));
+    }
+
+    @Test
+    void attackTakesTwoPrizesWhenKnockedOutPokemonIsEx() {
+        GameEntity game = activeGameReadyForAttack();
+        CardEntity attacker = pokemonWithAttack("xy1-1", "Pikachu", 60, "Gnaw", 1, "60");
+        CardEntity defender = card("xy1-2", "Bulbasaur-EX", "Pokémon", List.of("Basic", "EX"));
+        defender.setHp(50);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Gnaw"));
+
+        assertThat(response.players().getFirst().prizeCardsRemaining()).isEqualTo(4);
+        assertThat(response.players().getFirst().handCardIds()).contains("p1", "p2");
+        assertThat(response.logs()).anySatisfy(log -> {
+            assertThat(log.actionType()).isEqualTo("TAKE_PRIZE");
+            assertThat(log.message()).contains("2 premios");
+        });
     }
 
     @Test
@@ -923,15 +956,63 @@ class GameServiceTest {
         CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
         defender.setHp(50);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
-        when(cardRepository.findAllById(List.of("xy1-1", "xy1-2"))).thenReturn(List.of(attacker, defender));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
         when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Gnaw"));
 
         assertThat(response.status()).isEqualTo(GameStatus.FINISHED);
+        assertThat(response.winnerPlayerId()).isEqualTo(100L);
         assertThat(response.finishedAt()).isNotNull();
+        assertThat(response.turnPhase()).isNull();
         assertThat(response.players().getFirst().prizeCardsRemaining()).isZero();
         assertThat(response.players().getFirst().handCardIds()).contains("last-prize");
+        assertThat(response.logs()).anySatisfy(log -> assertThat(log.actionType()).isEqualTo("VICTORY_PRIZES"));
+    }
+
+    @Test
+    void attackFinishesGameWhenDefenderHasNoPokemonAfterKo() {
+        GameEntity game = activeGameReadyForAttack();
+        game.getPlayers().get(1).setBenchCardIds(new java.util.ArrayList<>());
+        CardEntity attacker = pokemonWithAttack("xy1-1", "Pikachu", 60, "Gnaw", 1, "60");
+        CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
+        defender.setHp(50);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Gnaw"));
+
+        assertThat(response.status()).isEqualTo(GameStatus.FINISHED);
+        assertThat(response.winnerPlayerId()).isEqualTo(100L);
+        assertThat(response.players().get(1).activePokemon()).isNull();
+        assertThat(response.players().get(1).benchPokemon()).isEmpty();
+        assertThat(response.logs()).anySatisfy(log -> assertThat(log.actionType()).isEqualTo("VICTORY_NO_POKEMON"));
+    }
+
+    @Test
+    void promoteActiveWorksAfterActivePokemonWasKnockedOut() {
+        GameEntity game = activeGameReadyForAttack();
+        CardEntity attacker = pokemonWithAttack("xy1-1", "Pikachu", 60, "Gnaw", 1, "60");
+        CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
+        defender.setHp(50);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        gameService.attack(1L, new AttackRequest(100L, "Gnaw"));
+        String benchInstanceId = game.getPlayers().get(1).getPokemonInPlay().stream()
+                .filter(pokemon -> pokemon.getZone() == PokemonZone.BENCH)
+                .findFirst()
+                .orElseThrow()
+                .getInstanceId();
+
+        GameResponse response = gameService.promoteActive(1L, new PromoteActiveRequest(200L, benchInstanceId));
+
+        assertThat(response.status()).isEqualTo(GameStatus.ACTIVE);
+        assertThat(response.players().get(1).activePokemonInstanceId()).isEqualTo(benchInstanceId);
+        assertThat(response.players().get(1).activePokemon().cardId()).isEqualTo("xy1-4");
+        assertThat(response.logs()).anySatisfy(log -> assertThat(log.actionType()).isEqualTo("PROMOTE_ACTIVE"));
     }
 
     @Test
@@ -973,6 +1054,48 @@ class GameServiceTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
                 .isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void attackFailsWhenGameIsFinished() {
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(finishedGame()));
+
+        assertFinishedAction(() -> gameService.attack(1L, new AttackRequest(100L, "Gnaw")));
+    }
+
+    @Test
+    void drawCardFailsWhenGameIsFinished() {
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(finishedGame()));
+
+        assertFinishedAction(() -> gameService.drawCard(1L, new GameActionRequest(100L)));
+    }
+
+    @Test
+    void attachEnergyFailsWhenGameIsFinished() {
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(finishedGame()));
+
+        assertFinishedAction(() -> gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "xy1-132", "xy1-1")));
+    }
+
+    @Test
+    void playBasicPokemonFailsWhenGameIsFinished() {
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(finishedGame()));
+
+        assertFinishedAction(() -> gameService.playBasicPokemon(1L, new PlayBasicPokemonRequest(100L, "xy1-1")));
+    }
+
+    @Test
+    void endTurnFailsWhenGameIsFinished() {
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(finishedGame()));
+
+        assertFinishedAction(() -> gameService.endTurn(1L, new GameActionRequest(100L)));
+    }
+
+    @Test
+    void promoteActiveFailsWhenGameIsFinished() {
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(finishedGame()));
+
+        assertFinishedAction(() -> gameService.promoteActive(1L, new PromoteActiveRequest(100L, "bench-copy")));
     }
 
     private DeckEntity deck(Long id, String name) {
@@ -1116,6 +1239,23 @@ class GameServiceTest {
         defender.getPokemonInPlay().add(pokemonInPlay("defender-bench", "xy1-2", PokemonZone.BENCH));
         defender.setActivePokemonInstanceId("defender-active");
         return game;
+    }
+
+    private GameEntity finishedGame() {
+        GameEntity game = activeGame();
+        game.setStatus(GameStatus.FINISHED);
+        game.setWinnerPlayerId(100L);
+        game.setTurnPhase(null);
+        game.getPlayers().getFirst().getPokemonInPlay().add(pokemonInPlay("bench-copy", "xy1-1", PokemonZone.BENCH));
+        return game;
+    }
+
+    private void assertFinishedAction(Runnable action) {
+        assertThatThrownBy(action::run)
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("La partida ya finalizó.")
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
     }
 
     private PokemonInPlay pokemonInPlay(String instanceId, String cardId, PokemonZone zone) {

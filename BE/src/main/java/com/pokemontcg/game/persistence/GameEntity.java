@@ -33,6 +33,7 @@ public class GameEntity {
     private TurnPhase turnPhase;
 
     private Long currentPlayerId;
+    private Long winnerPlayerId;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -89,6 +90,14 @@ public class GameEntity {
 
     public void setCurrentPlayerId(Long currentPlayerId) {
         this.currentPlayerId = currentPlayerId;
+    }
+
+    public Long getWinnerPlayerId() {
+        return winnerPlayerId;
+    }
+
+    public void setWinnerPlayerId(Long winnerPlayerId) {
+        this.winnerPlayerId = winnerPlayerId;
     }
 
     public LocalDateTime getCreatedAt() {

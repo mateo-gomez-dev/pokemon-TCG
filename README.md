@@ -97,8 +97,8 @@ Reglas de validacion implementadas:
 
 - exactamente 60 cartas
 - maximo 4 copias del mismo nombre, excepto Energia Basica
-- maximo 1 carta de AS TACTICO / ACE SPEC
 - al menos 1 Pokemon Basico
+- Como el proyecto trabaja solo con XY1, no se valida AS TACTICO / ACE SPEC porque ese set no contiene cartas de ese subtipo. Esta regla solo aplicaria si se agregan otros sets que incluyan ACE SPEC.
 
 Crear mazo:
 
