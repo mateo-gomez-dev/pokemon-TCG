@@ -39,6 +39,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -63,6 +64,10 @@ public class GameService {
     private static final int PRIZE_CARD_COUNT = 6;
     private static final int PRIZE_CARDS_START_INDEX = INITIAL_HAND_SIZE;
     private static final int REMAINING_DECK_START_INDEX = INITIAL_HAND_SIZE + PRIZE_CARD_COUNT;
+    private static final String COLORLESS_ENERGY_TYPE = "Colorless";
+    private static final Set<String> SUPPORTED_ENERGY_TYPES = Set.of(
+            "Grass", "Fire", "Water", "Lightning", "Psychic", "Fighting", "Darkness", "Metal", "Fairy", "Dragon", COLORLESS_ENERGY_TYPE
+    );
     private final GameRepository gameRepository;
     private final DeckRepository deckRepository;
     private final DeckValidator deckValidator;
@@ -267,23 +272,21 @@ public class GameService {
         String attackerActiveCardId = attackerActive.getCardId();
         String defenderActiveCardId = defenderActive.getCardId();
 
-        Map<String, CardEntity> cardsById = findCardsById(List.of(attackerActiveCardId, defenderActiveCardId));
+        List<String> requiredCardIds = new ArrayList<>(List.of(attackerActiveCardId, defenderActiveCardId));
+        requiredCardIds.addAll(attackerActive.getAttachedEnergyCardIds());
+        Map<String, CardEntity> cardsById = findCardsById(requiredCardIds);
         CardEntity attackerCard = findCard(cardsById, attackerActiveCardId, "Pokemon atacante no encontrado");
         CardEntity defenderCard = findCard(cardsById, defenderActiveCardId, "Pokemon defensor no encontrado");
-        JsonNode attackNode = findAttack(attackerCard, request.attackName());
-        int requiredEnergy = requiredEnergy(attackNode);
-        int attachedEnergy = attackerActive.getAttachedEnergyCardIds().size();
-        if (attachedEnergy < requiredEnergy) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Energia insuficiente para atacar");
-        }
+        JsonNode attackNode = resolveAttack(attackerCard, request);
+        List<CardEntity> attachedEnergyCards = attachedEnergyCards(attackerActive, cardsById);
+        assertCanPayAttackCost(attackNode, attachedEnergyCards);
 
         int damage = attackDamage(attackNode);
         int accumulatedDamage = defenderActive.getDamage() + damage;
         defenderActive.setDamage(accumulatedDamage);
 
-        addLog(game, attacker.getId(), "ATTACK", attacker.getPlayerName() + " ataco con " + attackerCard.getName()
-                + " usando " + attackNode.path("name").asText(request.attackName())
-                + " e hizo " + damage + " de dano.");
+        addLog(game, attacker.getId(), "ATTACK", attacker.getPlayerName() + " uso " + attackNode.path("name").asText("Ataque")
+                + " con " + attackerCard.getName() + " e hizo " + damage + " de dano a " + defenderCard.getName() + ".");
 
         boolean knockedOut = remainingHp(defenderCard, defenderActive) <= 0;
         if (knockedOut) {
@@ -546,25 +549,139 @@ public class GameService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, errorMessage));
     }
 
-    private JsonNode findAttack(CardEntity card, String attackName) {
+    private JsonNode resolveAttack(CardEntity card, AttackRequest request) {
         JsonNode attacks = card.getAttacks();
-        if (attacks == null || !attacks.isArray()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El Pokemon no tiene ataques");
+        if (attacks == null || !attacks.isArray() || attacks.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El Pokemon activo no tiene ataques disponibles.");
         }
-        for (JsonNode attack : attacks) {
-            if (attackName.equalsIgnoreCase(attack.path("name").asText())) {
-                return attack;
+
+        if (request.attackName() != null && !request.attackName().isBlank()) {
+            for (JsonNode attack : attacks) {
+                if (request.attackName().equalsIgnoreCase(attack.path("name").asText())) {
+                    return attack;
+                }
             }
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El Pokemon activo no tiene ese ataque.");
         }
-        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Ataque no encontrado");
+
+        if (request.attackIndex() != null) {
+            if (request.attackIndex() < 0 || request.attackIndex() >= attacks.size()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El Pokemon activo no tiene ese ataque.");
+            }
+            return attacks.get(request.attackIndex());
+        }
+
+        return attacks.get(0);
     }
 
-    private int requiredEnergy(JsonNode attack) {
-        if (attack.hasNonNull("convertedEnergyCost")) {
-            return attack.path("convertedEnergyCost").asInt();
+    private List<CardEntity> attachedEnergyCards(PokemonInPlay pokemon, Map<String, CardEntity> cardsById) {
+        List<CardEntity> energyCards = new ArrayList<>();
+        for (String energyCardId : pokemon.getAttachedEnergyCardIds()) {
+            energyCards.add(findCard(cardsById, energyCardId, "Energia unida no encontrada: " + energyCardId));
         }
+        return energyCards;
+    }
+
+    private void assertCanPayAttackCost(JsonNode attack, List<CardEntity> attachedEnergyCards) {
+        List<String> cost = attackCost(attack);
+        if (cost.isEmpty()) {
+            return;
+        }
+
+        Map<String, Integer> availableEnergyByType = new LinkedHashMap<>();
+        for (CardEntity energyCard : attachedEnergyCards) {
+            String energyType = energyType(energyCard);
+            availableEnergyByType.merge(energyType, 1, Integer::sum);
+        }
+
+        Map<String, Integer> remainingEnergyByType = new LinkedHashMap<>(availableEnergyByType);
+        int colorlessCost = 0;
+        for (String requiredType : cost) {
+            if (!SUPPORTED_ENERGY_TYPES.contains(requiredType)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Costo de energia no soportado para el ataque "
+                        + attack.path("name").asText("seleccionado") + ": " + requiredType + ".");
+            }
+            if (COLORLESS_ENERGY_TYPE.equals(requiredType)) {
+                colorlessCost++;
+                continue;
+            }
+            int available = remainingEnergyByType.getOrDefault(requiredType, 0);
+            if (available <= 0) {
+                throw insufficientEnergy(attack, cost, attachedEnergyCards);
+            }
+            remainingEnergyByType.put(requiredType, available - 1);
+        }
+
+        int remainingEnergy = remainingEnergyByType.values().stream().mapToInt(Integer::intValue).sum();
+        if (remainingEnergy < colorlessCost) {
+            throw insufficientEnergy(attack, cost, attachedEnergyCards);
+        }
+    }
+
+    private List<String> attackCost(JsonNode attack) {
         JsonNode cost = attack.path("cost");
-        return cost.isArray() ? cost.size() : 0;
+        if (!cost.isArray()) {
+            return List.of();
+        }
+        List<String> requiredTypes = new ArrayList<>();
+        for (JsonNode costEntry : cost) {
+            requiredTypes.add(canonicalEnergyType(costEntry.asText("")));
+        }
+        return requiredTypes;
+    }
+
+    private ResponseStatusException insufficientEnergy(JsonNode attack, List<String> cost, List<CardEntity> attachedEnergyCards) {
+        return new ResponseStatusException(HttpStatus.CONFLICT, "No hay suficiente energia para usar el ataque "
+                + attack.path("name").asText("seleccionado") + ". Requiere: " + formatEnergyTypes(cost)
+                + ". Energias unidas: " + formatEnergyTypes(attachedEnergyCards.stream().map(this::energyType).toList()) + ".");
+    }
+
+    private String energyType(CardEntity card) {
+        if (!ENERGY_SUPERTYPE.equalsIgnoreCase(card.getSupertype())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "La carta unida no es una Energia: " + card.getId());
+        }
+        if (card.getTypes() != null) {
+            for (String type : card.getTypes()) {
+                String canonicalType = canonicalEnergyType(type);
+                if (SUPPORTED_ENERGY_TYPES.contains(canonicalType)) {
+                    return canonicalType;
+                }
+            }
+        }
+        if (card.getSubtypes() != null) {
+            for (String subtype : card.getSubtypes()) {
+                String canonicalSubtype = canonicalEnergyType(subtype);
+                if (SUPPORTED_ENERGY_TYPES.contains(canonicalSubtype)) {
+                    return canonicalSubtype;
+                }
+            }
+        }
+        String normalizedName = normalizeEnergyType(card.getName());
+        for (String supportedType : SUPPORTED_ENERGY_TYPES) {
+            if (normalizedName.contains(normalizeEnergyType(supportedType) + " ENERGY")
+                    || normalizedName.contains(normalizeEnergyType(supportedType) + " ENERGIA")) {
+                return supportedType;
+            }
+        }
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se pudo determinar el tipo de energia de " + card.getName() + ".");
+    }
+
+    private String canonicalEnergyType(String value) {
+        String normalized = normalizeEnergyType(value);
+        for (String supportedType : SUPPORTED_ENERGY_TYPES) {
+            if (normalizeEnergyType(supportedType).equals(normalized)) {
+                return supportedType;
+            }
+        }
+        return value == null ? "" : value.trim();
+    }
+
+    private String normalizeEnergyType(String value) {
+        return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String formatEnergyTypes(List<String> energyTypes) {
+        return energyTypes.isEmpty() ? "-" : String.join(", ", energyTypes);
     }
 
     private int attackDamage(JsonNode attack) {

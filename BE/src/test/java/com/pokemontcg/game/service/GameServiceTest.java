@@ -766,7 +766,7 @@ class GameServiceTest {
         CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
         defender.setHp(70);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
-        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, grassEnergy("xy1-132")));
         when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Gnaw"));
@@ -787,13 +787,205 @@ class GameServiceTest {
         CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
         defender.setHp(70);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
-        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, grassEnergy("xy1-132")));
         when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Gnaw"));
 
         assertThat(response.players().get(1).damageByPokemonInstanceId()).containsEntry("defender-active", 30);
         assertThat(response.players().get(1).damageByPokemonInstanceId()).containsEntry("defender-bench", 0);
+    }
+
+    @Test
+    void attackWithoutCostWorksWithoutEnergy() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = pokemonWithAttackCost("xy1-1", "Pikachu", 60, "Free Hit", List.of(), "10");
+        CardEntity defender = pokemonWithAttackCost("xy1-2", "Bulbasaur", 70, "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Free Hit"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(10);
+        assertThat(response.currentPlayerId()).isEqualTo(200L);
+    }
+
+    @Test
+    void attackWithGrassCostFailsWithoutEnergy() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = pokemonWithAttackCost("xy1-1", "Pikachu", 60, "Leaf Hit", List.of("Grass"), "30");
+        CardEntity defender = pokemonWithAttackCost("xy1-2", "Bulbasaur", 70, "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+
+        assertThatThrownBy(() -> gameService.attack(1L, new AttackRequest(100L, "Leaf Hit")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("No hay suficiente energia")
+                .hasMessageContaining("Requiere: Grass")
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+        assertEnergyFailureDidNotChangeCombatState(game);
+    }
+
+    @Test
+    void attackWithGrassCostWorksWithGrassEnergy() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of("grass-1"));
+        CardEntity attacker = pokemonWithAttackCost("xy1-1", "Pikachu", 60, "Leaf Hit", List.of("Grass"), "30");
+        CardEntity defender = pokemonWithAttackCost("xy1-2", "Bulbasaur", 70, "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, grassEnergy("grass-1")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Leaf Hit"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(30);
+    }
+
+    @Test
+    void attackWithColorlessCostWorksWithAnyEnergy() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of("fire-1"));
+        CardEntity attacker = pokemonWithAttackCost("xy1-1", "Pikachu", 60, "Tackle", List.of("Colorless"), "20");
+        CardEntity defender = pokemonWithAttackCost("xy1-2", "Bulbasaur", 70, "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, energy("fire-1", "Fire Energy", "Fire")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Tackle"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(20);
+    }
+
+    @Test
+    void attackWithGrassAndColorlessCostWorksWithGrassAndAnyEnergy() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of("grass-1", "fire-1"));
+        CardEntity attacker = pokemonWithAttackCost("xy1-1", "Pikachu", 60, "Vine Hit", List.of("Grass", "Colorless"), "40");
+        CardEntity defender = pokemonWithAttackCost("xy1-2", "Bulbasaur", 70, "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, grassEnergy("grass-1"), energy("fire-1", "Fire Energy", "Fire")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Vine Hit"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(40);
+    }
+
+    @Test
+    void attackWithGrassAndColorlessCostFailsWithOnlyGrassEnergy() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of("grass-1"));
+        CardEntity attacker = pokemonWithAttackCost("xy1-1", "Pikachu", 60, "Vine Hit", List.of("Grass", "Colorless"), "40");
+        CardEntity defender = pokemonWithAttackCost("xy1-2", "Bulbasaur", 70, "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, grassEnergy("grass-1")));
+
+        assertThatThrownBy(() -> gameService.attack(1L, new AttackRequest(100L, "Vine Hit")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("No hay suficiente energia")
+                .hasMessageContaining("Requiere: Grass, Colorless");
+        assertEnergyFailureDidNotChangeCombatState(game);
+    }
+
+    @Test
+    void attackWithTwoGrassCostFailsWithOnlyOneGrassEnergy() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of("grass-1"));
+        CardEntity attacker = pokemonWithAttackCost("xy1-1", "Pikachu", 60, "Double Leaf", List.of("Grass", "Grass"), "50");
+        CardEntity defender = pokemonWithAttackCost("xy1-2", "Bulbasaur", 70, "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, grassEnergy("grass-1")));
+
+        assertThatThrownBy(() -> gameService.attack(1L, new AttackRequest(100L, "Double Leaf")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("No hay suficiente energia")
+                .hasMessageContaining("Requiere: Grass, Grass");
+        assertEnergyFailureDidNotChangeCombatState(game);
+    }
+
+    @Test
+    void attackWithTwoGrassCostWorksWithTwoGrassEnergy() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of("grass-1", "grass-2"));
+        CardEntity attacker = pokemonWithAttackCost("xy1-1", "Pikachu", 60, "Double Leaf", List.of("Grass", "Grass"), "50");
+        CardEntity defender = pokemonWithAttackCost("xy1-2", "Bulbasaur", 70, "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, grassEnergy("grass-1"), grassEnergy("grass-2")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Double Leaf"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(50);
+    }
+
+    @Test
+    void colorlessEnergyDoesNotPaySpecificGrassCost() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of("colorless-1"));
+        CardEntity attacker = pokemonWithAttackCost("xy1-1", "Pikachu", 60, "Leaf Hit", List.of("Grass"), "30");
+        CardEntity defender = pokemonWithAttackCost("xy1-2", "Bulbasaur", 70, "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, energy("colorless-1", "Double Colorless Energy", "Colorless")));
+
+        assertThatThrownBy(() -> gameService.attack(1L, new AttackRequest(100L, "Leaf Hit")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("No hay suficiente energia")
+                .hasMessageContaining("Energias unidas: Colorless");
+        assertEnergyFailureDidNotChangeCombatState(game);
+    }
+
+    @Test
+    void attackOnlyUsesEnergyAttachedToAttackerInstance() {
+        GameEntity game = activeGameWithRepeatedAttackerInstancesAndBenchEnergy();
+        CardEntity attacker = pokemonWithAttackCost("xy1-1", "Pikachu", 60, "Leaf Hit", List.of("Grass"), "30");
+        CardEntity defender = pokemonWithAttackCost("xy1-2", "Bulbasaur", 70, "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, grassEnergy("grass-1")));
+
+        assertThatThrownBy(() -> gameService.attack(1L, new AttackRequest(100L, "Leaf Hit")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("No hay suficiente energia");
+        assertEnergyFailureDidNotChangeCombatState(game);
+    }
+
+    @Test
+    void attackWithoutNameOrIndexUsesFirstAttack() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = pokemonWithTwoAttacks("xy1-1", "Pikachu", 60);
+        CardEntity defender = pokemonWithAttackCost("xy1-2", "Bulbasaur", 70, "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, null, null));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(10);
+        assertThat(response.logs()).anySatisfy(log -> assertThat(log.message()).contains("Quick Hit"));
+    }
+
+    @Test
+    void attackIndexSelectsCorrectAttack() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = pokemonWithTwoAttacks("xy1-1", "Pikachu", 60);
+        CardEntity defender = pokemonWithAttackCost("xy1-2", "Bulbasaur", 70, "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, null, 1));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(40);
+        assertThat(response.logs()).anySatisfy(log -> assertThat(log.message()).contains("Heavy Hit"));
+    }
+
+    @Test
+    void attackNameSelectsCorrectAttack() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = pokemonWithTwoAttacks("xy1-1", "Pikachu", 60);
+        CardEntity defender = pokemonWithAttackCost("xy1-2", "Bulbasaur", 70, "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Heavy Hit"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(40);
+        assertThat(response.logs()).anySatisfy(log -> assertThat(log.message()).contains("Heavy Hit"));
     }
 
     @Test
@@ -874,11 +1066,11 @@ class GameServiceTest {
         CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
         defender.setHp(70);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
-        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, grassEnergy("xy1-132")));
 
         assertThatThrownBy(() -> gameService.attack(1L, new AttackRequest(100L, "Thunderbolt")))
                 .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("Ataque no encontrado")
+                .hasMessageContaining("El Pokemon activo no tiene ese ataque")
                 .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
                 .isEqualTo(HttpStatus.BAD_REQUEST);
     }
@@ -891,11 +1083,11 @@ class GameServiceTest {
         CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
         defender.setHp(70);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
-        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, grassEnergy("xy1-132")));
 
         assertThatThrownBy(() -> gameService.attack(1L, new AttackRequest(100L, "Gnaw")))
                 .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("Energia insuficiente")
+                .hasMessageContaining("No hay suficiente energia")
                 .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
                 .isEqualTo(HttpStatus.CONFLICT);
     }
@@ -908,7 +1100,7 @@ class GameServiceTest {
         CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
         defender.setHp(50);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
-        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, grassEnergy("xy1-132")));
         when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Gnaw"));
@@ -935,7 +1127,7 @@ class GameServiceTest {
         CardEntity defender = card("xy1-2", "Bulbasaur-EX", "Pokémon", List.of("Basic", "EX"));
         defender.setHp(50);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
-        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, grassEnergy("xy1-132")));
         when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Gnaw"));
@@ -956,7 +1148,7 @@ class GameServiceTest {
         CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
         defender.setHp(50);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
-        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, grassEnergy("xy1-132")));
         when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Gnaw"));
@@ -978,7 +1170,7 @@ class GameServiceTest {
         CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
         defender.setHp(50);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
-        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, grassEnergy("xy1-132")));
         when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Gnaw"));
@@ -997,7 +1189,7 @@ class GameServiceTest {
         CardEntity defender = card("xy1-2", "Bulbasaur", "Pokémon", List.of("Basic"));
         defender.setHp(50);
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
-        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, grassEnergy("xy1-132")));
         when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         gameService.attack(1L, new AttackRequest(100L, "Gnaw"));
@@ -1140,6 +1332,42 @@ class GameServiceTest {
         return card;
     }
 
+    private CardEntity pokemonWithAttackCost(String id, String name, int hp, String attackName, List<String> cost, String damage) {
+        CardEntity card = card(id, name, "Pokémon", List.of("Basic"));
+        card.setHp(hp);
+        card.setAttacks(objectMapper.valueToTree(List.of(attack(attackName, cost, damage))));
+        return card;
+    }
+
+    private CardEntity pokemonWithTwoAttacks(String id, String name, int hp) {
+        CardEntity card = card(id, name, "Pokémon", List.of("Basic"));
+        card.setHp(hp);
+        card.setAttacks(objectMapper.valueToTree(List.of(
+                attack("Quick Hit", List.of(), "10"),
+                attack("Heavy Hit", List.of(), "40")
+        )));
+        return card;
+    }
+
+    private Map<String, Object> attack(String name, List<String> cost, String damage) {
+        Map<String, Object> attack = new java.util.LinkedHashMap<>();
+        attack.put("name", name);
+        attack.put("cost", cost);
+        attack.put("convertedEnergyCost", cost.size());
+        attack.put("damage", damage);
+        return attack;
+    }
+
+    private CardEntity grassEnergy(String id) {
+        return energy(id, "Grass Energy", "Grass");
+    }
+
+    private CardEntity energy(String id, String name, String type) {
+        CardEntity card = card(id, name, "Energy", List.of("Basic"));
+        card.setTypes(List.of(type));
+        return card;
+    }
+
     private GameEntity waitingGameWithPlayer(Long id, DeckEntity deck) {
         GameEntity game = new GameEntity();
         game.setId(id);
@@ -1239,6 +1467,47 @@ class GameServiceTest {
         defender.getPokemonInPlay().add(pokemonInPlay("defender-bench", "xy1-2", PokemonZone.BENCH));
         defender.setActivePokemonInstanceId("defender-active");
         return game;
+    }
+
+    private GameEntity activeGameReadyForAttackWithAttachedEnergies(List<String> energyCardIds) {
+        GameEntity game = activeGame();
+        game.setTurnPhase(TurnPhase.MAIN);
+
+        GamePlayerEntity attacker = game.getPlayers().getFirst();
+        PokemonInPlay attackerActive = pokemonInPlay("attacker-active", "xy1-1", PokemonZone.ACTIVE);
+        attackerActive.getAttachedEnergyCardIds().addAll(energyCardIds);
+        attacker.getPokemonInPlay().add(attackerActive);
+        attacker.setActivePokemonInstanceId("attacker-active");
+
+        GamePlayerEntity defender = game.getPlayers().get(1);
+        defender.getPokemonInPlay().add(pokemonInPlay("defender-active", "xy1-2", PokemonZone.ACTIVE));
+        defender.setActivePokemonInstanceId("defender-active");
+        return game;
+    }
+
+    private GameEntity activeGameWithRepeatedAttackerInstancesAndBenchEnergy() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        PokemonInPlay benchCopy = pokemonInPlay("attacker-bench", "xy1-1", PokemonZone.BENCH);
+        benchCopy.getAttachedEnergyCardIds().add("grass-1");
+        game.getPlayers().getFirst().getPokemonInPlay().add(benchCopy);
+        return game;
+    }
+
+    private void assertEnergyFailureDidNotChangeCombatState(GameEntity game) {
+        GamePlayerEntity attacker = game.getPlayers().getFirst();
+        GamePlayerEntity defender = game.getPlayers().get(1);
+        PokemonInPlay defenderActive = defender.getPokemonInPlay().stream()
+                .filter(pokemon -> pokemon.getZone() == PokemonZone.ACTIVE)
+                .findFirst()
+                .orElseThrow();
+        assertThat(defenderActive.getDamage()).isZero();
+        assertThat(defender.getActivePokemonInstanceId()).isNotBlank();
+        assertThat(defender.getDiscardCardIds()).isEmpty();
+        assertThat(attacker.getPrizeCardIds()).hasSize(6);
+        assertThat(game.getCurrentPlayerId()).isEqualTo(100L);
+        assertThat(game.getTurnPhase()).isEqualTo(TurnPhase.MAIN);
+        assertThat(game.getLogs()).extracting(GameLogEntity::getActionType)
+                .doesNotContain("ATTACK", "KNOCK_OUT", "TAKE_PRIZE");
     }
 
     private GameEntity finishedGame() {

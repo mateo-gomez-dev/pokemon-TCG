@@ -304,7 +304,7 @@ interface SelectedCardDetail {
             <label>
               Ataque
               <select [(ngModel)]="selectedAttackName">
-                <option value="">Seleccionar</option>
+                <option value="">Primer ataque disponible</option>
                 <option *ngFor="let attack of activePokemonAttacks; trackBy: trackByAttackName" [value]="attack.name">
                   {{ attackLabel(attack) }}
                 </option>
@@ -1342,7 +1342,7 @@ export class GamesPageComponent implements OnInit {
       && !!opponentPlayer
       && !!currentPlayer.activePokemon
       && !!opponentPlayer.activePokemon
-      && !!this.selectedAttackName;
+      && this.activePokemonAttacks.length > 0;
   }
 
   canPromoteActive(): boolean {
@@ -1526,14 +1526,14 @@ export class GamesPageComponent implements OnInit {
   }
 
   attack(): void {
-    if (!this.selectedGame?.currentPlayerId || !this.selectedAttackName) {
+    if (!this.selectedGame?.currentPlayerId || this.activePokemonAttacks.length === 0) {
       return;
     }
+    const request = this.selectedAttackName
+      ? { playerId: this.selectedGame.currentPlayerId, attackName: this.selectedAttackName }
+      : { playerId: this.selectedGame.currentPlayerId };
     this.runGameMutation(
-      this.gamesService.attack(this.selectedGame.id, {
-        playerId: this.selectedGame.currentPlayerId,
-        attackName: this.selectedAttackName
-      }),
+      this.gamesService.attack(this.selectedGame.id, request),
       'Ataque realizado.',
       'No se pudo atacar.'
     );
@@ -1604,9 +1604,9 @@ export class GamesPageComponent implements OnInit {
   }
 
   attackLabel(attack: CardAttack): string {
-    const energyCost = attack.convertedEnergyCost ?? attack.cost?.length ?? 0;
-    const damage = attack.damage ? ` - ${attack.damage} dano` : '';
-    return `${attack.name} (${energyCost} energia)${damage}`;
+    const cost = attack.cost?.length ? attack.cost.join(', ') : 'Sin costo';
+    const damage = attack.damage || '-';
+    return `${attack.name} - Costo: ${cost} - Dano: ${damage}`;
   }
 
   cardImageUrl(cardId: string): string {

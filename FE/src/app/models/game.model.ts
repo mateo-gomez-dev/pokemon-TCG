@@ -25,7 +25,8 @@ export interface PromoteActiveRequest extends GameActionRequest {
 }
 
 export interface AttackRequest extends GameActionRequest {
-  attackName: string;
+  attackName?: string;
+  attackIndex?: number;
 }
 
 export interface GameResponse {
