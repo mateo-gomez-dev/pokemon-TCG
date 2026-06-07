@@ -79,6 +79,17 @@ public class GameService {
     private record DamageModifier(int damage, String label) {
     }
 
+    private record AttackContext(
+            GamePlayerEntity attacker,
+            GamePlayerEntity defender,
+            PokemonInPlay attackerActive,
+            PokemonInPlay defenderActive,
+            CardEntity attackerCard,
+            CardEntity defenderCard,
+            JsonNode attackNode
+    ) {
+    }
+
     public GameService(GameRepository gameRepository, DeckRepository deckRepository, DeckValidator deckValidator, CardRepository cardRepository) {
         this.gameRepository = gameRepository;
         this.deckRepository = deckRepository;
@@ -179,9 +190,7 @@ public class GameService {
 
         GamePlayerEntity player = findPlayer(game, request.playerId());
         GamePlayerEntity nextPlayer = findOtherPlayer(game, request.playerId());
-        game.setCurrentPlayerId(nextPlayer.getId());
-        game.setTurnPhase(TurnPhase.DRAW);
-        nextPlayer.setEnergyAttachedThisTurn(false);
+        passTurnTo(game, nextPlayer);
         addLog(game, player.getId(), "END_TURN", "Jugador " + player.getPlayerName() + " finalizo su turno.");
 
         return toResponse(gameRepository.save(game));
@@ -271,6 +280,27 @@ public class GameService {
         GameEntity game = findActiveGameForCurrentPlayer(gameId, request.playerId());
         assertMainPhase(game);
 
+        AttackContext attack = resolveAttackContext(game, request);
+        applyAttackDamage(game, attack);
+        boolean knockedOut = handleKnockOutAndPrizes(game, attack);
+        completeAttack(game, attack, knockedOut);
+
+        return toResponse(gameRepository.save(game));
+    }
+
+    @Transactional(readOnly = true)
+    public List<GameResponse> getGames() {
+        return gameRepository.findAll().stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public GameResponse getGame(Long id) {
+        return toResponse(findGame(id));
+    }
+
+    private AttackContext resolveAttackContext(GameEntity game, AttackRequest request) {
         GamePlayerEntity attacker = findPlayer(game, request.playerId());
         GamePlayerEntity defender = findOtherPlayer(game, request.playerId());
         PokemonInPlay attackerActive = requireActivePokemon(attacker, "El jugador actual no tiene Pokemon activo");
@@ -287,53 +317,52 @@ public class GameService {
         List<CardEntity> attachedEnergyCards = attachedEnergyCards(attackerActive, cardsById);
         assertCanPayAttackCost(attackNode, attachedEnergyCards);
 
-        DamageCalculation damage = calculateDamage(attackNode, attackerCard, defenderCard);
-        int accumulatedDamage = defenderActive.getDamage() + damage.finalDamage();
-        defenderActive.setDamage(accumulatedDamage);
+        return new AttackContext(attacker, defender, attackerActive, defenderActive, attackerCard, defenderCard, attackNode);
+    }
 
-        addLog(game, attacker.getId(), "ATTACK", attacker.getPlayerName() + " uso " + attackNode.path("name").asText("Ataque")
-                + " con " + attackerCard.getName() + " contra " + defenderCard.getName()
+    private void applyAttackDamage(GameEntity game, AttackContext attack) {
+        DamageCalculation damage = calculateDamage(attack.attackNode(), attack.attackerCard(), attack.defenderCard());
+        int accumulatedDamage = attack.defenderActive().getDamage() + damage.finalDamage();
+        attack.defenderActive().setDamage(accumulatedDamage);
+
+        addLog(game, attack.attacker().getId(), "ATTACK", attack.attacker().getPlayerName() + " uso " + attack.attackNode().path("name").asText("Ataque")
+                + " con " + attack.attackerCard().getName() + " contra " + attack.defenderCard().getName()
                 + ". Dano base: " + damage.baseDamage()
                 + ". Debilidad: " + damage.weakness()
                 + ". Resistencia: " + damage.resistance()
                 + ". Dano final: " + damage.finalDamage() + ".");
+    }
 
-        boolean knockedOut = remainingHp(defenderCard, defenderActive) <= 0;
+    private boolean handleKnockOutAndPrizes(GameEntity game, AttackContext attack) {
+        boolean knockedOut = remainingHp(attack.defenderCard(), attack.defenderActive()) <= 0;
         if (knockedOut) {
-            knockOutPokemon(game, defender, defenderActive, defenderCard);
-            int prizesToTake = prizeCountForKnockOut(defenderCard);
-            int prizesTaken = takePrizeCards(attacker, prizesToTake);
-            addLog(game, attacker.getId(), "TAKE_PRIZE", "Jugador " + attacker.getPlayerName()
+            knockOutPokemon(game, attack.defender(), attack.defenderActive(), attack.defenderCard());
+            int prizesToTake = prizeCountForKnockOut(attack.defenderCard());
+            int prizesTaken = takePrizeCards(attack.attacker(), prizesToTake);
+            addLog(game, attack.attacker().getId(), "TAKE_PRIZE", "Jugador " + attack.attacker().getPlayerName()
                     + " tomo " + prizesTaken + " premio" + (prizesTaken == 1 ? "" : "s") + ".");
         }
+        return knockedOut;
+    }
 
-        syncDerivedPokemonFields(attacker);
-        syncDerivedPokemonFields(defender);
+    private void completeAttack(GameEntity game, AttackContext attack, boolean knockedOut) {
+        syncDerivedPokemonFields(attack.attacker());
+        syncDerivedPokemonFields(attack.defender());
 
-        if (knockedOut && attacker.getPrizeCardIds().isEmpty()) {
-            finishGame(game, attacker, "VICTORY_PRIZES", "Jugador " + attacker.getPlayerName() + " gano al tomar todos sus premios.");
-        } else if (knockedOut && activePokemon(defender) == null && benchPokemon(defender).isEmpty()) {
-            finishGame(game, attacker, "VICTORY_NO_POKEMON", "Jugador " + attacker.getPlayerName()
-                    + " gano porque " + defender.getPlayerName() + " no tiene Pokemon en juego.");
+        if (knockedOut && attack.attacker().getPrizeCardIds().isEmpty()) {
+            finishGame(game, attack.attacker(), "VICTORY_PRIZES", "Jugador " + attack.attacker().getPlayerName() + " gano al tomar todos sus premios.");
+        } else if (knockedOut && activePokemon(attack.defender()) == null && benchPokemon(attack.defender()).isEmpty()) {
+            finishGame(game, attack.attacker(), "VICTORY_NO_POKEMON", "Jugador " + attack.attacker().getPlayerName()
+                    + " gano porque " + attack.defender().getPlayerName() + " no tiene Pokemon en juego.");
         } else {
-            game.setCurrentPlayerId(defender.getId());
-            game.setTurnPhase(TurnPhase.DRAW);
-            defender.setEnergyAttachedThisTurn(false);
+            passTurnTo(game, attack.defender());
         }
-
-        return toResponse(gameRepository.save(game));
     }
 
-    @Transactional(readOnly = true)
-    public List<GameResponse> getGames() {
-        return gameRepository.findAll().stream()
-                .map(this::toResponse)
-                .toList();
-    }
-
-    @Transactional(readOnly = true)
-    public GameResponse getGame(Long id) {
-        return toResponse(findGame(id));
+    private void passTurnTo(GameEntity game, GamePlayerEntity nextPlayer) {
+        game.setCurrentPlayerId(nextPlayer.getId());
+        game.setTurnPhase(TurnPhase.DRAW);
+        nextPlayer.setEnergyAttachedThisTurn(false);
     }
 
     private GameEntity findGame(Long id) {
@@ -598,13 +627,20 @@ public class GameService {
             return;
         }
 
-        Map<String, Integer> availableEnergyByType = new LinkedHashMap<>();
-        for (CardEntity energyCard : attachedEnergyCards) {
-            String energyType = energyType(energyCard);
-            availableEnergyByType.merge(energyType, 1, Integer::sum);
-        }
+        Map<String, Integer> remainingEnergyByType = countEnergyByType(attachedEnergyCards);
+        int colorlessCost = paySpecificAttackCost(attack, cost, attachedEnergyCards, remainingEnergyByType);
+        assertCanPayColorlessCost(attack, cost, attachedEnergyCards, remainingEnergyByType, colorlessCost);
+    }
 
-        Map<String, Integer> remainingEnergyByType = new LinkedHashMap<>(availableEnergyByType);
+    private Map<String, Integer> countEnergyByType(List<CardEntity> attachedEnergyCards) {
+        Map<String, Integer> energyByType = new LinkedHashMap<>();
+        for (CardEntity energyCard : attachedEnergyCards) {
+            energyByType.merge(energyType(energyCard), 1, Integer::sum);
+        }
+        return energyByType;
+    }
+
+    private int paySpecificAttackCost(JsonNode attack, List<String> cost, List<CardEntity> attachedEnergyCards, Map<String, Integer> remainingEnergyByType) {
         int colorlessCost = 0;
         for (String requiredType : cost) {
             if (!SUPPORTED_ENERGY_TYPES.contains(requiredType)) {
@@ -621,7 +657,16 @@ public class GameService {
             }
             remainingEnergyByType.put(requiredType, available - 1);
         }
+        return colorlessCost;
+    }
 
+    private void assertCanPayColorlessCost(
+            JsonNode attack,
+            List<String> cost,
+            List<CardEntity> attachedEnergyCards,
+            Map<String, Integer> remainingEnergyByType,
+            int colorlessCost
+    ) {
         int remainingEnergy = remainingEnergyByType.values().stream().mapToInt(Integer::intValue).sum();
         if (remainingEnergy < colorlessCost) {
             throw insufficientEnergy(attack, cost, attachedEnergyCards);

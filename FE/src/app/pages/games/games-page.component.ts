@@ -118,7 +118,7 @@ interface SelectedCardDetail {
                 <span>Fase {{ selectedGame.turnPhase || '-' }}</span>
                 <span>Turno {{ selectedGame.currentPlayerId || '-' }}</span>
               </div>
-              <button type="button" (click)="startGame()" [disabled]="selectedGame.status !== 'WAITING' || selectedGame.players.length !== 2">
+              <button type="button" (click)="startGame()" [disabled]="!canStartGame()">
                 Iniciar
               </button>
             </header>
@@ -266,7 +266,7 @@ interface SelectedCardDetail {
                 <option *ngFor="let cardId of basicCardsInHand; trackBy: trackByIndexedCardId" [value]="cardId">{{ cardLabel(cardId) }}</option>
               </select>
             </label>
-            <button type="button" (click)="playBasicPokemon()" [disabled]="selectedGame.status !== 'ACTIVE' || selectedGame.turnPhase !== 'MAIN' || !selectedBasicCardId">
+            <button type="button" (click)="playBasicPokemon()" [disabled]="!canPlayBasicPokemon()">
               Jugar basico
             </button>
 
@@ -286,7 +286,7 @@ interface SelectedCardDetail {
                 </option>
               </select>
             </label>
-            <button type="button" (click)="attachEnergy()" [disabled]="selectedGame.status !== 'ACTIVE' || selectedGame.turnPhase !== 'MAIN' || !selectedEnergyCardId || !selectedTargetPokemonInstanceId">
+            <button type="button" (click)="attachEnergy()" [disabled]="!canAttachEnergy()">
               Unir energia
             </button>
             <label *ngIf="canPromoteActive()">
@@ -320,7 +320,7 @@ interface SelectedCardDetail {
             <button type="button" class="attack-button" (click)="attack()" [disabled]="!canAttack()">
               Atacar
             </button>
-            <button type="button" class="end-turn" (click)="endTurn()" [disabled]="selectedGame.status !== 'ACTIVE'">
+            <button type="button" class="end-turn" (click)="endTurn()" [disabled]="!canEndTurn()">
               Acabar turno
             </button>
           </aside>
@@ -1322,11 +1322,44 @@ export class GamesPageComponent implements OnInit {
     return this.opponentPlayer?.activePokemon?.cardId ?? '';
   }
 
+  isActiveGame(): boolean {
+    return this.selectedGame?.status === 'ACTIVE';
+  }
+
+  isDrawPhase(): boolean {
+    return this.selectedGame?.turnPhase === 'DRAW';
+  }
+
+  isMainPhase(): boolean {
+    return this.selectedGame?.turnPhase === 'MAIN';
+  }
+
+  canStartGame(): boolean {
+    const selectedGame = this.selectedGame;
+    return !!selectedGame && selectedGame.status === 'WAITING' && selectedGame.players.length === 2;
+  }
+
   canDrawCard(): boolean {
-    return !!this.selectedGame
-      && this.selectedGame.status === 'ACTIVE'
-      && this.selectedGame.turnPhase === 'DRAW'
-      && !!this.selectedGame.currentPlayerId;
+    return this.isActiveGame()
+      && this.isDrawPhase()
+      && !!this.selectedGame?.currentPlayerId;
+  }
+
+  canPlayBasicPokemon(): boolean {
+    return this.isActiveGame()
+      && this.isMainPhase()
+      && !!this.selectedBasicCardId;
+  }
+
+  canAttachEnergy(): boolean {
+    return this.isActiveGame()
+      && this.isMainPhase()
+      && !!this.selectedEnergyCardId
+      && !!this.selectedTargetPokemonInstanceId;
+  }
+
+  canEndTurn(): boolean {
+    return this.isActiveGame();
   }
 
   canAttack(): boolean {
@@ -1335,8 +1368,8 @@ export class GamesPageComponent implements OnInit {
     const opponentPlayer = this.opponentPlayer;
 
     return !!selectedGame
-      && selectedGame.status === 'ACTIVE'
-      && selectedGame.turnPhase === 'MAIN'
+      && this.isActiveGame()
+      && this.isMainPhase()
       && !!selectedGame.currentPlayerId
       && !!currentPlayer
       && !!opponentPlayer
@@ -1346,26 +1379,23 @@ export class GamesPageComponent implements OnInit {
   }
 
   canPromoteActive(): boolean {
-    return !!this.selectedGame
-      && this.selectedGame.status === 'ACTIVE'
+    return this.isActiveGame()
       && !!this.currentPlayer
       && !this.currentPlayer.activePokemon
       && this.currentPlayer.benchPokemon.length > 0;
   }
 
   canDropToActive(): boolean {
-    return !!this.selectedGame
-      && this.selectedGame.status === 'ACTIVE'
-      && this.selectedGame.turnPhase === 'MAIN'
+    return this.isActiveGame()
+      && this.isMainPhase()
       && !!this.currentPlayer
       && !this.currentPlayer.activePokemon
       && (!!this.draggedBenchPokemonInstanceId || (!!this.draggedHandCardId && this.isBasicPokemon(this.draggedHandCardId)));
   }
 
   canDropToBench(): boolean {
-    return !!this.selectedGame
-      && this.selectedGame.status === 'ACTIVE'
-      && this.selectedGame.turnPhase === 'MAIN'
+    return this.isActiveGame()
+      && this.isMainPhase()
       && !!this.currentPlayer
       && !!this.draggedHandCardId
       && this.isBasicPokemon(this.draggedHandCardId)
@@ -1478,14 +1508,7 @@ export class GamesPageComponent implements OnInit {
       return;
     }
     const targetZone = this.currentPlayer.activePokemon ? 'BENCH' : 'ACTIVE';
-    this.runGameMutation(
-      this.gamesService.playBasicPokemon(this.selectedGame.id, {
-        playerId: this.currentPlayer.id,
-        cardId: this.selectedBasicCardId,
-        targetZone
-      }),
-      'Pokemon jugado.'
-    );
+    this.playBasicPokemonToZone(this.selectedBasicCardId, targetZone, 'Pokemon jugado.');
   }
 
   attachEnergy(): void {
@@ -1580,8 +1603,7 @@ export class GamesPageComponent implements OnInit {
   }
 
   cardType(cardId: string): string {
-    const card = this.cardsById[cardId];
-    return [card?.supertype, ...(card?.subtypes ?? [])].filter(Boolean).join(' / ') || 'Carta';
+    return this.formatCardType(this.cardsById[cardId]);
   }
 
   cardHp(cardId: string): number {
@@ -1610,8 +1632,7 @@ export class GamesPageComponent implements OnInit {
   }
 
   cardImageUrl(cardId: string): string {
-    const card = this.cardsById[cardId];
-    return card?.imageSmallUrl ?? card?.imageSmall ?? card?.imageUrl ?? card?.images?.small ?? card?.imageLargeUrl ?? card?.images?.large ?? '';
+    return this.preferredCardImage(this.cardsById[cardId]);
   }
 
   attachedEnergyCount(player: GamePlayerResponse, pokemonCardId: string, pokemon?: PokemonInPlayResponse): number {
@@ -1639,8 +1660,7 @@ export class GamesPageComponent implements OnInit {
   }
 
   cardDetailImage(detail: SelectedCardDetail): string {
-    const card = detail.card;
-    return card?.imageLargeUrl ?? card?.images?.large ?? card?.imageSmallUrl ?? card?.imageSmall ?? card?.imageUrl ?? card?.images?.small ?? '';
+    return this.preferredCardImage(detail.card, true);
   }
 
   cardDetailName(detail: SelectedCardDetail): string {
@@ -1648,8 +1668,18 @@ export class GamesPageComponent implements OnInit {
   }
 
   cardDetailType(detail: SelectedCardDetail): string {
-    const card = detail.card;
+    return this.formatCardType(detail.card);
+  }
+
+  private formatCardType(card?: Card): string {
     return [card?.supertype, ...(card?.subtypes ?? [])].filter(Boolean).join(' / ') || 'Carta';
+  }
+
+  private preferredCardImage(card?: Card, preferLarge = false): string {
+    if (preferLarge) {
+      return card?.imageLargeUrl ?? card?.images?.large ?? card?.imageSmallUrl ?? card?.imageSmall ?? card?.imageUrl ?? card?.images?.small ?? '';
+    }
+    return card?.imageSmallUrl ?? card?.imageSmall ?? card?.imageUrl ?? card?.images?.small ?? card?.imageLargeUrl ?? card?.images?.large ?? '';
   }
 
   formatModifierList(value: unknown): string {
@@ -1725,7 +1755,7 @@ export class GamesPageComponent implements OnInit {
     this.clearDragState();
   }
 
-  private playBasicPokemonToZone(cardId: string, targetZone: 'ACTIVE' | 'BENCH'): void {
+  private playBasicPokemonToZone(cardId: string, targetZone: 'ACTIVE' | 'BENCH', successMessage?: string): void {
     if (!this.selectedGame || !this.currentPlayer) {
       return;
     }
@@ -1735,7 +1765,7 @@ export class GamesPageComponent implements OnInit {
         cardId,
         targetZone
       }),
-      targetZone === 'ACTIVE' ? 'Pokemon jugado como activo.' : 'Pokemon jugado a banca.'
+      successMessage ?? (targetZone === 'ACTIVE' ? 'Pokemon jugado como activo.' : 'Pokemon jugado a banca.')
     );
   }
 

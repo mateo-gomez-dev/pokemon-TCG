@@ -9,9 +9,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
-import static com.pokemontcg.card.domain.CardRules.hasAnySubtype;
 import static com.pokemontcg.card.domain.CardRules.isBasicEnergy;
 import static com.pokemontcg.card.domain.CardRules.isBasicPokemon;
 
@@ -20,8 +18,6 @@ public class DeckValidator {
 
     private static final int REQUIRED_TOTAL_CARDS = 60;
     private static final int MAX_COPIES_BY_NAME = 4;
-    private static final int MAX_ACE_SPEC_CARDS = 1;
-    private static final Set<String> ACE_SPEC_SUBTYPES = Set.of("ACE SPEC", "AS TACTICO", "AS TÁCTICO");
 
     public DeckValidationResponse validate(List<DeckCardEntity> deckCards) {
         int totalCards = deckCards.stream()
@@ -34,7 +30,7 @@ public class DeckValidator {
         }
 
         validateCopiesByName(deckCards, errors);
-        // XY1 no contiene ACE SPEC / AS TACTICO; esta regla queda disponible si se agregan otros sets.
+        // XY1 no contiene ACE SPEC / AS TACTICO, por eso no se aplica esa regla.
         validateBasicPokemon(deckCards, errors);
 
         return new DeckValidationResponse(errors.isEmpty(), totalCards, errors);
@@ -53,17 +49,6 @@ public class DeckValidator {
         copiesByName.entrySet().stream()
                 .filter(entry -> entry.getValue() > MAX_COPIES_BY_NAME)
                 .forEach(entry -> errors.add("La carta " + entry.getKey() + " supera el maximo de 4 copias."));
-    }
-
-    private void validateAceSpec(List<DeckCardEntity> deckCards, List<String> errors) {
-        int aceSpecCount = deckCards.stream()
-                .filter(deckCard -> hasAnySubtype(deckCard.getCard(), ACE_SPEC_SUBTYPES))
-                .mapToInt(DeckCardEntity::getQuantity)
-                .sum();
-
-        if (aceSpecCount > MAX_ACE_SPEC_CARDS) {
-            errors.add("El mazo puede tener como maximo " + MAX_ACE_SPEC_CARDS + " carta de AS TACTICO.");
-        }
     }
 
     private void validateBasicPokemon(List<DeckCardEntity> deckCards, List<String> errors) {
