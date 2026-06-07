@@ -989,6 +989,243 @@ class GameServiceTest {
     }
 
     @Test
+    void attackWithoutWeaknessOrResistanceAppliesBaseDamage() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), "20");
+        CardEntity defender = typedPokemonWithAttack("xy1-2", "Bulbasaur", 70, "Grass", "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(20);
+    }
+
+    @Test
+    void attackAppliesTimesTwoWeakness() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), "20");
+        CardEntity defender = withWeakness(typedPokemonWithAttack("xy1-2", "Bulbasaur", 70, "Grass", "Growl", List.of(), "0"), "Lightning", "×2");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(40);
+    }
+
+    @Test
+    void attackAppliesPlusTwentyWeakness() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), "20");
+        CardEntity defender = withWeakness(typedPokemonWithAttack("xy1-2", "Bulbasaur", 70, "Grass", "Growl", List.of(), "0"), "Lightning", "+20");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(40);
+    }
+
+    @Test
+    void attackAppliesResistance() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), "40");
+        CardEntity defender = withResistance(typedPokemonWithAttack("xy1-2", "Bulbasaur", 70, "Grass", "Growl", List.of(), "0"), "Lightning", "-20");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(20);
+    }
+
+    @Test
+    void resistanceDoesNotAllowNegativeDamage() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), "10");
+        CardEntity defender = withResistance(typedPokemonWithAttack("xy1-2", "Bulbasaur", 70, "Grass", "Growl", List.of(), "0"), "Lightning", "-20");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isZero();
+    }
+
+    @Test
+    void weaknessDoesNotApplyWhenAttackerTypeDoesNotMatch() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), "20");
+        CardEntity defender = withWeakness(typedPokemonWithAttack("xy1-2", "Bulbasaur", 70, "Grass", "Growl", List.of(), "0"), "Fire", "×2");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(20);
+    }
+
+    @Test
+    void resistanceDoesNotApplyWhenAttackerTypeDoesNotMatch() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), "40");
+        CardEntity defender = withResistance(typedPokemonWithAttack("xy1-2", "Bulbasaur", 70, "Grass", "Growl", List.of(), "0"), "Fire", "-20");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(40);
+    }
+
+    @Test
+    void attackAppliesWeaknessBeforeResistance() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), "20");
+        CardEntity defender = withResistance(
+                withWeakness(typedPokemonWithAttack("xy1-2", "Bulbasaur", 70, "Grass", "Growl", List.of(), "0"), "Lightning", "×2"),
+                "Lightning",
+                "-10"
+        );
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(30);
+    }
+
+    @Test
+    void attackParsesPlusDamageAsBaseNumber() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), "30+");
+        CardEntity defender = typedPokemonWithAttack("xy1-2", "Bulbasaur", 70, "Grass", "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(30);
+    }
+
+    @Test
+    void attackParsesMultiplyDamageAsBaseNumber() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), "10×");
+        CardEntity defender = typedPokemonWithAttack("xy1-2", "Bulbasaur", 70, "Grass", "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(10);
+    }
+
+    @Test
+    void attackWithEmptyDamageDealsZeroDamageAndDoesNotApplyWeakness() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), "");
+        CardEntity defender = withWeakness(typedPokemonWithAttack("xy1-2", "Bulbasaur", 70, "Grass", "Growl", List.of(), "0"), "Lightning", "+20");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isZero();
+    }
+
+    @Test
+    void attackWithNullDamageDealsZeroDamage() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), null);
+        CardEntity defender = typedPokemonWithAttack("xy1-2", "Bulbasaur", 70, "Grass", "Growl", List.of(), "0");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isZero();
+    }
+
+    @Test
+    void finalDamageCanCauseKnockOut() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), "20");
+        CardEntity defender = withWeakness(typedPokemonWithAttack("xy1-2", "Bulbasaur", 30, "Grass", "Growl", List.of(), "0"), "Lightning", "×2");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.players().get(1).activePokemon()).isNull();
+        assertThat(response.players().get(1).discardCardIds()).contains("xy1-2");
+        assertThat(response.logs()).anySatisfy(log -> assertThat(log.actionType()).isEqualTo("KNOCK_OUT"));
+    }
+
+    @Test
+    void resistanceCanPreventKnockOut() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), "40");
+        CardEntity defender = withResistance(typedPokemonWithAttack("xy1-2", "Bulbasaur", 30, "Grass", "Growl", List.of(), "0"), "Lightning", "-20");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.players().get(1).activePokemon()).isNotNull();
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(20);
+        assertThat(response.logs()).noneSatisfy(log -> assertThat(log.actionType()).isEqualTo("KNOCK_OUT"));
+    }
+
+    @Test
+    void attackLogIncludesBaseAndFinalDamage() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), "20");
+        CardEntity defender = withWeakness(typedPokemonWithAttack("xy1-2", "Bulbasaur", 70, "Grass", "Growl", List.of(), "0"), "Lightning", "×2");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.logs()).anySatisfy(log -> {
+            assertThat(log.actionType()).isEqualTo("ATTACK");
+            assertThat(log.message()).contains("Dano base: 20");
+            assertThat(log.message()).contains("Debilidad: x2");
+            assertThat(log.message()).contains("Dano final: 40");
+        });
+    }
+
+    @Test
+    void energyValidationStillRunsBeforeWeaknessAndResistance() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of("Lightning"), "20");
+        CardEntity defender = withWeakness(typedPokemonWithAttack("xy1-2", "Bulbasaur", 70, "Grass", "Growl", List.of(), "0"), "Lightning", "×2");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender));
+
+        assertThatThrownBy(() -> gameService.attack(1L, new AttackRequest(100L, "Spark")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("No hay suficiente energia");
+        assertEnergyFailureDidNotChangeCombatState(game);
+    }
+
+    @Test
     void attackFailsWhenGameDoesNotExist() {
         when(gameRepository.findById(99L)).thenReturn(Optional.empty());
 
@@ -1336,6 +1573,22 @@ class GameServiceTest {
         CardEntity card = card(id, name, "Pokémon", List.of("Basic"));
         card.setHp(hp);
         card.setAttacks(objectMapper.valueToTree(List.of(attack(attackName, cost, damage))));
+        return card;
+    }
+
+    private CardEntity typedPokemonWithAttack(String id, String name, int hp, String type, String attackName, List<String> cost, String damage) {
+        CardEntity card = pokemonWithAttackCost(id, name, hp, attackName, cost, damage);
+        card.setTypes(List.of(type));
+        return card;
+    }
+
+    private CardEntity withWeakness(CardEntity card, String type, String value) {
+        card.setWeaknesses(objectMapper.valueToTree(List.of(Map.of("type", type, "value", value))));
+        return card;
+    }
+
+    private CardEntity withResistance(CardEntity card, String type, String value) {
+        card.setResistances(objectMapper.valueToTree(List.of(Map.of("type", type, "value", value))));
         return card;
     }
 

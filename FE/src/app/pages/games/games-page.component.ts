@@ -380,8 +380,8 @@ interface SelectedCardDetail {
                 <p *ngIf="attack.text">{{ attack.text }}</p>
               </article>
             </section>
-            <p *ngIf="detail.card?.weaknesses">Debilidad: {{ detail.card?.weaknesses | json }}</p>
-            <p *ngIf="detail.card?.resistances">Resistencia: {{ detail.card?.resistances | json }}</p>
+            <p *ngIf="detail.card?.weaknesses">Debilidad: {{ formatModifierList(detail.card?.weaknesses) }}</p>
+            <p *ngIf="detail.card?.resistances">Resistencia: {{ formatModifierList(detail.card?.resistances) }}</p>
           </div>
         </article>
       </section>
@@ -1650,6 +1650,21 @@ export class GamesPageComponent implements OnInit {
   cardDetailType(detail: SelectedCardDetail): string {
     const card = detail.card;
     return [card?.supertype, ...(card?.subtypes ?? [])].filter(Boolean).join(' / ') || 'Carta';
+  }
+
+  formatModifierList(value: unknown): string {
+    if (Array.isArray(value)) {
+      const entries = value.map((item) => {
+        if (!this.isRecord(item)) {
+          return String(item);
+        }
+        const type = typeof item['type'] === 'string' ? item['type'] : '';
+        const modifier = typeof item['value'] === 'string' ? item['value'] : '';
+        return [type, modifier].filter(Boolean).join(' ');
+      }).filter(Boolean);
+      return entries.join(', ') || '-';
+    }
+    return value ? JSON.stringify(value) : '-';
   }
 
   onHandCardDragStart(event: DragEvent, cardId: string): void {

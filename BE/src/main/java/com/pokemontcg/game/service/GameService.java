@@ -73,6 +73,12 @@ public class GameService {
     private final DeckValidator deckValidator;
     private final CardRepository cardRepository;
 
+    private record DamageCalculation(int baseDamage, int finalDamage, String weakness, String resistance) {
+    }
+
+    private record DamageModifier(int damage, String label) {
+    }
+
     public GameService(GameRepository gameRepository, DeckRepository deckRepository, DeckValidator deckValidator, CardRepository cardRepository) {
         this.gameRepository = gameRepository;
         this.deckRepository = deckRepository;
@@ -281,12 +287,16 @@ public class GameService {
         List<CardEntity> attachedEnergyCards = attachedEnergyCards(attackerActive, cardsById);
         assertCanPayAttackCost(attackNode, attachedEnergyCards);
 
-        int damage = attackDamage(attackNode);
-        int accumulatedDamage = defenderActive.getDamage() + damage;
+        DamageCalculation damage = calculateDamage(attackNode, attackerCard, defenderCard);
+        int accumulatedDamage = defenderActive.getDamage() + damage.finalDamage();
         defenderActive.setDamage(accumulatedDamage);
 
         addLog(game, attacker.getId(), "ATTACK", attacker.getPlayerName() + " uso " + attackNode.path("name").asText("Ataque")
-                + " con " + attackerCard.getName() + " e hizo " + damage + " de dano a " + defenderCard.getName() + ".");
+                + " con " + attackerCard.getName() + " contra " + defenderCard.getName()
+                + ". Dano base: " + damage.baseDamage()
+                + ". Debilidad: " + damage.weakness()
+                + ". Resistencia: " + damage.resistance()
+                + ". Dano final: " + damage.finalDamage() + ".");
 
         boolean knockedOut = remainingHp(defenderCard, defenderActive) <= 0;
         if (knockedOut) {
@@ -688,6 +698,82 @@ public class GameService {
         String damage = attack.path("damage").asText("");
         Matcher matcher = DAMAGE_NUMBER_PATTERN.matcher(damage);
         return matcher.find() ? Integer.parseInt(matcher.group()) : 0;
+    }
+
+    private DamageCalculation calculateDamage(JsonNode attack, CardEntity attackerCard, CardEntity defenderCard) {
+        int baseDamage = attackDamage(attack);
+        if (baseDamage <= 0) {
+            return new DamageCalculation(baseDamage, 0, "no", "no");
+        }
+
+        String attackerType = primaryPokemonType(attackerCard);
+        if (attackerType == null || attackerType.isBlank()) {
+            return new DamageCalculation(baseDamage, baseDamage, "no", "no");
+        }
+
+        DamageModifier weakness = applyWeakness(baseDamage, defenderCard.getWeaknesses(), attackerType);
+        DamageModifier resistance = applyResistance(weakness.damage(), defenderCard.getResistances(), attackerType);
+        return new DamageCalculation(baseDamage, Math.max(0, resistance.damage()), weakness.label(), resistance.label());
+    }
+
+    private String primaryPokemonType(CardEntity card) {
+        if (card.getTypes() == null || card.getTypes().isEmpty()) {
+            return null;
+        }
+        return canonicalEnergyType(card.getTypes().getFirst());
+    }
+
+    private DamageModifier applyWeakness(int damage, JsonNode weaknesses, String attackerType) {
+        JsonNode matchingModifier = matchingTypeModifier(weaknesses, attackerType);
+        if (matchingModifier == null) {
+            return new DamageModifier(damage, "no");
+        }
+
+        String value = matchingModifier.path("value").asText("").trim();
+        String normalizedValue = value.toLowerCase(Locale.ROOT);
+        if (normalizedValue.contains("x2") || normalizedValue.contains("×2") || normalizedValue.contains("*2")) {
+            return new DamageModifier(damage * 2, "x2");
+        }
+        if (value.startsWith("+")) {
+            Integer bonus = firstNumber(value);
+            if (bonus != null) {
+                return new DamageModifier(damage + bonus, "+" + bonus);
+            }
+        }
+        return new DamageModifier(damage, "no");
+    }
+
+    private DamageModifier applyResistance(int damage, JsonNode resistances, String attackerType) {
+        JsonNode matchingModifier = matchingTypeModifier(resistances, attackerType);
+        if (matchingModifier == null) {
+            return new DamageModifier(damage, "no");
+        }
+
+        String value = matchingModifier.path("value").asText("").trim();
+        if (value.startsWith("-")) {
+            Integer reduction = firstNumber(value);
+            if (reduction != null) {
+                return new DamageModifier(Math.max(0, damage - reduction), "-" + reduction);
+            }
+        }
+        return new DamageModifier(damage, "no");
+    }
+
+    private JsonNode matchingTypeModifier(JsonNode modifiers, String attackerType) {
+        if (modifiers == null || !modifiers.isArray()) {
+            return null;
+        }
+        for (JsonNode modifier : modifiers) {
+            if (attackerType.equals(canonicalEnergyType(modifier.path("type").asText("")))) {
+                return modifier;
+            }
+        }
+        return null;
+    }
+
+    private Integer firstNumber(String value) {
+        Matcher matcher = DAMAGE_NUMBER_PATTERN.matcher(value == null ? "" : value);
+        return matcher.find() ? Integer.parseInt(matcher.group()) : null;
     }
 
     private int remainingHp(CardEntity card, PokemonInPlay pokemon) {
