@@ -244,8 +244,8 @@ public class GameService {
         }
 
         CardEntity energyCard = findCardOrBadRequest(request.energyCardId(), "Energia no encontrada");
-        assertAttachableEnergy(energyCard);
         CardEntity targetCard = findCardOrBadRequest(targetPokemon.getCardId(), "Pokemon objetivo no encontrado");
+        assertAttachableEnergy(energyCard, targetCard);
         assertEnergyCompatibleWithPokemon(energyCard, targetCard);
 
         player.getHandCardIds().remove(request.energyCardId());
@@ -467,11 +467,11 @@ public class GameService {
         }
     }
 
-    private void assertAttachableEnergy(CardEntity card) {
+    private void assertAttachableEnergy(CardEntity card, CardEntity pokemonCard) {
         if (!ENERGY_SUPERTYPE.equalsIgnoreCase(card.getSupertype())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La carta no es una Energia");
         }
-        if (!hasSubtype(card, BASIC_SUBTYPE) && !isSpecialAnyEnergy(card)) {
+        if (!hasSubtype(card, BASIC_SUBTYPE) && !isSpecialAnyEnergy(card) && !(isColorlessPokemon(pokemonCard) && hasSubtype(card, "Special"))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La energia no es Basica");
         }
     }
@@ -480,20 +480,40 @@ public class GameService {
         if (!POKEMON_SUPERTYPE.equalsIgnoreCase(pokemonCard.getSupertype())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Pokemon objetivo no encontrado");
         }
+        List<String> pokemonTypes = pokemonTypes(pokemonCard);
+        if (pokemonTypes.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se pudo determinar el tipo de Pokemon de " + pokemonCard.getName() + ".");
+        }
+        if (isColorlessPokemon(pokemonTypes)) {
+            return;
+        }
         if (isSpecialAnyEnergy(energyCard)) {
             return;
         }
 
         String energyType = energyType(energyCard);
-        List<String> pokemonTypes = pokemonCard.getTypes() == null ? List.of() : pokemonCard.getTypes().stream()
-                .map(this::canonicalEnergyType)
-                .toList();
-        if (pokemonTypes.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se pudo determinar el tipo de Pokemon de " + pokemonCard.getName() + ".");
-        }
         if (!pokemonTypes.contains(energyType)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, energyCard.getName() + " no es compatible con " + pokemonCard.getName() + ".");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "La energía " + energyType + " no es compatible con "
+                    + pokemonCard.getName() + ". Tipos del Pokémon: " + formatEnergyTypes(pokemonTypes) + ".");
         }
+    }
+
+    private List<String> pokemonTypes(CardEntity pokemonCard) {
+        if (pokemonCard.getTypes() == null) {
+            return List.of();
+        }
+        return pokemonCard.getTypes().stream()
+                .map(this::canonicalEnergyType)
+                .filter(type -> !type.isBlank())
+                .toList();
+    }
+
+    private boolean isColorlessPokemon(CardEntity pokemonCard) {
+        return isColorlessPokemon(pokemonTypes(pokemonCard));
+    }
+
+    private boolean isColorlessPokemon(List<String> pokemonTypes) {
+        return pokemonTypes.contains(COLORLESS_ENERGY_TYPE);
     }
 
     private boolean isSpecialAnyEnergy(CardEntity card) {

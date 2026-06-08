@@ -684,9 +684,55 @@ class GameServiceTest {
     }
 
     @Test
+    void attachEnergyAllowsFireEnergyOnColorlessPokemon() {
+        assertEnergyAttachesToActivePokemon(energy("fire-1", "Fire Energy", "Fire"), basicPokemon("xy1-1", "Fletchling", "Colorless"));
+    }
+
+    @Test
+    void attachEnergyAllowsWaterEnergyOnColorlessPokemon() {
+        assertEnergyAttachesToActivePokemon(energy("water-1", "Water Energy", "Water"), basicPokemon("xy1-1", "Fletchling", "Colorless"));
+    }
+
+    @Test
+    void attachEnergyAllowsGrassEnergyOnColorlessPokemon() {
+        assertEnergyAttachesToActivePokemon(grassEnergy("grass-1"), basicPokemon("xy1-1", "Fletchling", "Colorless"));
+    }
+
+    @Test
+    void attachEnergyAllowsLightningEnergyOnColorlessPokemon() {
+        assertEnergyAttachesToActivePokemon(energy("lightning-1", "Lightning Energy", "Lightning"), basicPokemon("xy1-1", "Fletchling", "Colorless"));
+    }
+
+    @Test
+    void attachEnergyAllowsDoubleColorlessEnergyOnColorlessPokemon() {
+        assertEnergyAttachesToActivePokemon(specialEnergy("dce-1", "Double Colorless Energy"), basicPokemon("xy1-1", "Fletchling", "Colorless"));
+    }
+
+    @Test
+    void attachEnergyAllowsRainbowEnergyOnColorlessPokemon() {
+        assertEnergyAttachesToActivePokemon(specialEnergy("rainbow-1", "Rainbow Energy"), basicPokemon("xy1-1", "Fletchling", "Colorless"));
+    }
+
+    @Test
+    void attachEnergyRejectsWaterEnergyOnFirePokemonAndDoesNotMutateState() {
+        GameEntity game = activeGameWithActiveAndEnergyInHand("water-1");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("water-1")).thenReturn(Optional.of(energy("water-1", "Water Energy", "Water")));
+        when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(basicPokemon("xy1-1", "Fennekin", "Fire")));
+
+        assertThatThrownBy(() -> gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "water-1", "xy1-1")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("La energía Water no es compatible con Fennekin")
+                .hasMessageContaining("Tipos del Pokémon: Fire")
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+        assertAttachEnergyFailureDidNotChangeState(game, "water-1");
+    }
+
+    @Test
     void attachEnergyAllowsDoubleColorlessEnergyOnAnyPokemon() {
         GameEntity game = activeGameWithActiveAndEnergyInHand("dce-1");
-        CardEntity doubleColorless = card("dce-1", "Double Colorless Energy", "Energy", List.of("Special"));
+        CardEntity doubleColorless = specialEnergy("dce-1", "Double Colorless Energy");
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
         when(cardRepository.findById("dce-1")).thenReturn(Optional.of(doubleColorless));
         when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(basicPokemon("xy1-1", "Froakie", "Water")));
@@ -701,7 +747,7 @@ class GameServiceTest {
     @Test
     void attachEnergyAllowsRainbowEnergyOnAnyPokemon() {
         GameEntity game = activeGameWithActiveAndEnergyInHand("rainbow-1");
-        CardEntity rainbow = card("rainbow-1", "Rainbow Energy", "Energy", List.of("Special"));
+        CardEntity rainbow = specialEnergy("rainbow-1", "Rainbow Energy");
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
         when(cardRepository.findById("rainbow-1")).thenReturn(Optional.of(rainbow));
         when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(basicPokemon("xy1-1", "Pikachu", "Lightning")));
@@ -799,6 +845,7 @@ class GameServiceTest {
         CardEntity pokemon = card("xy1-132", "Pikachu", "Pokémon", List.of("Basic"));
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
         when(cardRepository.findById("xy1-132")).thenReturn(Optional.of(pokemon));
+        when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(basicPokemon("xy1-1", "Fennekin", "Fire")));
 
         assertThatThrownBy(() -> gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "xy1-132", "xy1-1")))
                 .isInstanceOf(ResponseStatusException.class)
@@ -812,6 +859,7 @@ class GameServiceTest {
         CardEntity specialEnergy = card("xy1-132", "Special Energy", "Energy", List.of("Special"));
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
         when(cardRepository.findById("xy1-132")).thenReturn(Optional.of(specialEnergy));
+        when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(basicPokemon("xy1-1", "Fennekin", "Fire")));
 
         assertThatThrownBy(() -> gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "xy1-132", "xy1-1")))
                 .isInstanceOf(ResponseStatusException.class)
@@ -1924,6 +1972,25 @@ class GameServiceTest {
         CardEntity card = card(id, name, "Energy", List.of("Basic"));
         card.setTypes(List.of(type));
         return card;
+    }
+
+    private CardEntity specialEnergy(String id, String name) {
+        return card(id, name, "Energy", List.of("Special"));
+    }
+
+    private void assertEnergyAttachesToActivePokemon(CardEntity energyCard, CardEntity pokemonCard) {
+        GameEntity game = activeGameWithActiveAndEnergyInHand(energyCard.getId());
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById(energyCard.getId())).thenReturn(Optional.of(energyCard));
+        when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(pokemonCard));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attachEnergy(1L, new AttachEnergyRequest(100L, energyCard.getId(), "xy1-1"));
+
+        assertThat(response.players().getFirst().attachedEnergyCardIdsByPokemonCardId())
+                .containsEntry("xy1-1", List.of(energyCard.getId()));
+        assertThat(response.players().getFirst().handCardIds()).doesNotContain(energyCard.getId());
+        assertThat(response.players().getFirst().energyAttachedThisTurn()).isTrue();
     }
 
     private GameEntity waitingGameWithPlayer(Long id, DeckEntity deck) {

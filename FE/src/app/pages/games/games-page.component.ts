@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, HostListener, OnInit } from '@angular/core';
+import { Component, ElementRef, HostListener, OnInit, ViewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Observable } from 'rxjs';
 
@@ -261,21 +261,31 @@ interface DrawAnimationState {
               </div>
             </section>
 
-            <section class="hand-fan" *ngIf="boardPlayer as player">
-              <article
-                class="tcg-card hand-card"
-                *ngFor="let cardId of player.handCardIds; let i = index; trackBy: trackByIndexedCardId"
-                [style.transform]="handTransform(i, player.handCardIds.length)"
-                [class.selectable]="isBasicPokemon(cardId) || isAttachableEnergy(cardId) || isEvolutionPokemon(cardId)"
-                [class.energy-card]="isAttachableEnergy(cardId)"
-                [class.evolution-card]="isEvolutionPokemon(cardId)"
-                [draggable]="isDraggableHandCard(cardId)"
-                (dragstart)="onHandCardDragStart($event, cardId)"
-                (dragend)="clearDragState()"
-                (click)="openCardDetail(cardId)"
-              >
-                <ng-container *ngTemplateOutlet="cardFace; context: { cardId: cardId, player: player, compact: true }"></ng-container>
-              </article>
+            <section class="hand-zone" *ngIf="boardPlayer as player">
+              <button type="button" class="hand-scroll-button" (click)="handScrollLeft()" aria-label="Ver cartas anteriores">
+                ‹
+              </button>
+              <div class="hand-scroll-wrapper" #handScrollWrapper>
+                <section class="hand-fan hand-cards-track">
+                  <article
+                    class="tcg-card hand-card"
+                    *ngFor="let cardId of player.handCardIds; let i = index; trackBy: trackByIndexedCardId"
+                    [style.transform]="handTransform(i, player.handCardIds.length)"
+                    [class.selectable]="isBasicPokemon(cardId) || isAttachableEnergy(cardId) || isEvolutionPokemon(cardId)"
+                    [class.energy-card]="isAttachableEnergy(cardId)"
+                    [class.evolution-card]="isEvolutionPokemon(cardId)"
+                    [draggable]="isDraggableHandCard(cardId)"
+                    (dragstart)="onHandCardDragStart($event, cardId)"
+                    (dragend)="clearDragState()"
+                    (click)="openCardDetail(cardId)"
+                  >
+                    <ng-container *ngTemplateOutlet="cardFace; context: { cardId: cardId, player: player, compact: true }"></ng-container>
+                  </article>
+                </section>
+              </div>
+              <button type="button" class="hand-scroll-button" (click)="handScrollRight()" aria-label="Ver cartas siguientes">
+                ›
+              </button>
             </section>
           </section>
 
@@ -1017,15 +1027,73 @@ interface DrawAnimationState {
       width: 24px;
     }
 
+    .hand-zone {
+      align-items: flex-end;
+      display: grid;
+      gap: 0.45rem;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      margin-top: 0.2rem;
+      overflow: visible;
+      position: relative;
+      z-index: 6;
+    }
+
+    .hand-scroll-wrapper {
+      min-height: 238px;
+      min-width: 0;
+      overflow-x: auto;
+      overflow-y: visible;
+      padding: 4rem 4.4rem 0.9rem;
+      scroll-behavior: smooth;
+      scrollbar-color: rgba(14, 165, 233, 0.7) rgba(224, 242, 254, 0.8);
+      scrollbar-width: thin;
+    }
+
+    .hand-scroll-wrapper::-webkit-scrollbar {
+      height: 10px;
+    }
+
+    .hand-scroll-wrapper::-webkit-scrollbar-track {
+      background: rgba(224, 242, 254, 0.8);
+      border-radius: 999px;
+    }
+
+    .hand-scroll-wrapper::-webkit-scrollbar-thumb {
+      background: rgba(14, 165, 233, 0.72);
+      border-radius: 999px;
+    }
+
     .hand-fan {
       align-items: flex-end;
       display: flex;
       justify-content: center;
       min-height: 182px;
+      min-width: 100%;
       overflow: visible;
-      padding: 1rem 1rem 0;
+      padding: 0;
       position: relative;
-      z-index: 5;
+      width: max-content;
+    }
+
+    .hand-scroll-button {
+      align-self: center;
+      background: rgba(15, 23, 42, 0.82);
+      border: 1px solid rgba(255, 255, 255, 0.7);
+      border-radius: 50%;
+      box-shadow: 0 12px 26px rgba(15, 23, 42, 0.22);
+      color: white;
+      font-size: 1.7rem;
+      font-weight: 900;
+      height: 46px;
+      line-height: 1;
+      position: relative;
+      width: 46px;
+      z-index: 9;
+    }
+
+    .hand-scroll-button:hover {
+      background: #0ea5e9;
+      transform: translateY(-1px);
     }
 
     .floating-actions {
@@ -1386,6 +1454,20 @@ interface DrawAnimationState {
         width: 88px;
       }
 
+      .hand-zone {
+        gap: 0.25rem;
+      }
+
+      .hand-scroll-wrapper {
+        min-height: 202px;
+        padding: 3.2rem 3rem 0.8rem;
+      }
+
+      .hand-scroll-button {
+        height: 38px;
+        width: 38px;
+      }
+
       .center-field {
         border-radius: 22px;
         display: grid;
@@ -1493,6 +1575,7 @@ export class GamesPageComponent implements OnInit {
   private readonly attackAnimationMs = 560;
   private readonly drawAnimationMs = 680;
   private readonly supportedEnergyTypes = ['Grass', 'Fire', 'Water', 'Lightning', 'Psychic', 'Fighting', 'Darkness', 'Metal', 'Fairy', 'Dragon', 'Colorless'];
+  @ViewChild('handScrollWrapper') private handScrollWrapper?: ElementRef<HTMLDivElement>;
   readonly benchSlots = [0, 1, 2, 3, 4];
   readonly showDebugInfo = false;
   decks: DeckResponse[] = [];
@@ -2303,6 +2386,18 @@ export class GamesPageComponent implements OnInit {
     return `translateY(${lift}px) rotate(${rotation}deg)`;
   }
 
+  handScrollLeft(): void {
+    this.scrollHandBy(-360);
+  }
+
+  handScrollRight(): void {
+    this.scrollHandBy(360);
+  }
+
+  private scrollHandBy(amount: number): void {
+    this.handScrollWrapper?.nativeElement.scrollBy({ left: amount, behavior: 'smooth' });
+  }
+
   isBasicPokemon(cardId: string): boolean {
     const card = this.cardsById[cardId];
     return card?.supertype === 'Pokémon' && (card.subtypes ?? []).includes('Basic');
@@ -2310,7 +2405,7 @@ export class GamesPageComponent implements OnInit {
 
   isAttachableEnergy(cardId: string): boolean {
     const card = this.cardsById[cardId];
-    return card?.supertype === 'Energy' && (this.hasCardSubtype(card, 'Basic') || this.isSpecialAnyEnergy(card));
+    return card?.supertype === 'Energy' && (this.hasCardSubtype(card, 'Basic') || this.hasCardSubtype(card, 'Special') || this.isSpecialAnyEnergy(card));
   }
 
   isEvolutionPokemon(cardId: string): boolean {
@@ -2335,7 +2430,16 @@ export class GamesPageComponent implements OnInit {
     const pokemonTypes = (pokemonCard.types ?? [])
       .map((type) => this.canonicalEnergyType(type))
       .filter(Boolean);
-    if (!energyType || pokemonTypes.length === 0) {
+    if (pokemonTypes.length === 0) {
+      return true;
+    }
+    if (pokemonTypes.includes('Colorless')) {
+      return true;
+    }
+    if (this.hasCardSubtype(energyCard, 'Special') && !this.hasCardSubtype(energyCard, 'Basic')) {
+      return false;
+    }
+    if (!energyType) {
       return true;
     }
     return pokemonTypes.includes(energyType);
