@@ -244,7 +244,9 @@ public class GameService {
         }
 
         CardEntity energyCard = findCardOrBadRequest(request.energyCardId(), "Energia no encontrada");
-        assertBasicEnergy(energyCard);
+        assertAttachableEnergy(energyCard);
+        CardEntity targetCard = findCardOrBadRequest(targetPokemon.getCardId(), "Pokemon objetivo no encontrado");
+        assertEnergyCompatibleWithPokemon(energyCard, targetCard);
 
         player.getHandCardIds().remove(request.energyCardId());
         targetPokemon.getAttachedEnergyCardIds().add(request.energyCardId());
@@ -284,6 +286,7 @@ public class GameService {
         assertMainPhase(game);
 
         GamePlayerEntity player = findPlayer(game, request.playerId());
+        assertEvolutionAvailableThisTurn(game, player);
         assertCardInList(player.getHandCardIds(), request.evolutionCardId(), "La carta de evolución no está en tu mano.");
         PokemonInPlay targetPokemon = findPokemonByInstanceId(player, request.targetPokemonInstanceId(), "No puedes evolucionar un Pokémon rival.");
         if (targetPokemon.getZone() != PokemonZone.ACTIVE && targetPokemon.getZone() != PokemonZone.BENCH) {
@@ -464,13 +467,55 @@ public class GameService {
         }
     }
 
-    private void assertBasicEnergy(CardEntity card) {
+    private void assertAttachableEnergy(CardEntity card) {
         if (!ENERGY_SUPERTYPE.equalsIgnoreCase(card.getSupertype())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La carta no es una Energia");
         }
-        if (!hasSubtype(card, BASIC_SUBTYPE)) {
+        if (!hasSubtype(card, BASIC_SUBTYPE) && !isSpecialAnyEnergy(card)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La energia no es Basica");
         }
+    }
+
+    private void assertEnergyCompatibleWithPokemon(CardEntity energyCard, CardEntity pokemonCard) {
+        if (!POKEMON_SUPERTYPE.equalsIgnoreCase(pokemonCard.getSupertype())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Pokemon objetivo no encontrado");
+        }
+        if (isSpecialAnyEnergy(energyCard)) {
+            return;
+        }
+
+        String energyType = energyType(energyCard);
+        List<String> pokemonTypes = pokemonCard.getTypes() == null ? List.of() : pokemonCard.getTypes().stream()
+                .map(this::canonicalEnergyType)
+                .toList();
+        if (pokemonTypes.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se pudo determinar el tipo de Pokemon de " + pokemonCard.getName() + ".");
+        }
+        if (!pokemonTypes.contains(energyType)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, energyCard.getName() + " no es compatible con " + pokemonCard.getName() + ".");
+        }
+    }
+
+    private boolean isSpecialAnyEnergy(CardEntity card) {
+        String normalizedName = normalizeEnergyType(card.getName());
+        return "DOUBLE COLORLESS ENERGY".equals(normalizedName) || "RAINBOW ENERGY".equals(normalizedName);
+    }
+
+    private void assertEvolutionAvailableThisTurn(GameEntity game, GamePlayerEntity player) {
+        for (int index = game.getLogs().size() - 1; index >= 0; index--) {
+            GameLogEntity log = game.getLogs().get(index);
+            String actionType = log.getActionType();
+            if (player.getId().equals(log.getPlayerId()) && "EVOLVE_POKEMON".equals(actionType)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "El jugador ya evolucionó un Pokémon este turno.");
+            }
+            if (isTurnBoundaryLog(actionType)) {
+                return;
+            }
+        }
+    }
+
+    private boolean isTurnBoundaryLog(String actionType) {
+        return "START_GAME".equals(actionType) || "END_TURN".equals(actionType) || "ATTACK".equals(actionType);
     }
 
     private void assertEvolutionCard(CardEntity card) {

@@ -266,8 +266,8 @@ interface DrawAnimationState {
                 class="tcg-card hand-card"
                 *ngFor="let cardId of player.handCardIds; let i = index; trackBy: trackByIndexedCardId"
                 [style.transform]="handTransform(i, player.handCardIds.length)"
-                [class.selectable]="isBasicPokemon(cardId) || isBasicEnergy(cardId) || isEvolutionPokemon(cardId)"
-                [class.energy-card]="isBasicEnergy(cardId)"
+                [class.selectable]="isBasicPokemon(cardId) || isAttachableEnergy(cardId) || isEvolutionPokemon(cardId)"
+                [class.energy-card]="isAttachableEnergy(cardId)"
                 [class.evolution-card]="isEvolutionPokemon(cardId)"
                 [draggable]="isDraggableHandCard(cardId)"
                 (dragstart)="onHandCardDragStart($event, cardId)"
@@ -1492,6 +1492,7 @@ interface DrawAnimationState {
 export class GamesPageComponent implements OnInit {
   private readonly attackAnimationMs = 560;
   private readonly drawAnimationMs = 680;
+  private readonly supportedEnergyTypes = ['Grass', 'Fire', 'Water', 'Lightning', 'Psychic', 'Fighting', 'Darkness', 'Metal', 'Fairy', 'Dragon', 'Colorless'];
   readonly benchSlots = [0, 1, 2, 3, 4];
   readonly showDebugInfo = false;
   decks: DeckResponse[] = [];
@@ -1577,7 +1578,7 @@ export class GamesPageComponent implements OnInit {
   }
 
   get energyCardsInHand(): string[] {
-    return this.currentPlayer?.handCardIds.filter((cardId) => this.isBasicEnergy(cardId)) ?? [];
+    return this.currentPlayer?.handCardIds.filter((cardId) => this.isAttachableEnergy(cardId)) ?? [];
   }
 
   get energyTargetPokemon(): PokemonInPlayResponse[] {
@@ -1696,7 +1697,8 @@ export class GamesPageComponent implements OnInit {
       && this.isMainPhase()
       && !!this.currentPlayer
       && !!this.draggedEnergyCardId
-      && this.energyTargetPokemon.some((target) => target.instanceId === pokemon.instanceId);
+      && this.energyTargetPokemon.some((target) => target.instanceId === pokemon.instanceId)
+      && this.isEnergyCompatibleWithPokemon(this.draggedEnergyCardId, pokemon.cardId);
   }
 
   canEvolvePokemonTo(pokemon: PokemonInPlayResponse): boolean {
@@ -2059,7 +2061,7 @@ export class GamesPageComponent implements OnInit {
     if (pokemon) {
       return pokemon.damage;
     }
-    return player.damageByPokemonCardId?.[pokemonCardId] ?? 0;
+    return 0;
   }
 
   remainingHp(player: GamePlayerResponse, pokemonCardId: string, pokemon?: PokemonInPlayResponse): number {
@@ -2088,7 +2090,7 @@ export class GamesPageComponent implements OnInit {
     if (pokemon) {
       return pokemon.attachedEnergyCount;
     }
-    return player.attachedEnergyCardIdsByPokemonCardId[pokemonCardId]?.length ?? 0;
+    return 0;
   }
 
   pokemonOptionLabel(pokemon: PokemonInPlayResponse): string {
@@ -2165,7 +2167,7 @@ export class GamesPageComponent implements OnInit {
       return;
     }
     this.draggedHandCardId = cardId;
-    this.draggedEnergyCardId = this.isBasicEnergy(cardId) ? cardId : '';
+    this.draggedEnergyCardId = this.isAttachableEnergy(cardId) ? cardId : '';
     this.draggedEvolutionCardId = this.isEvolutionPokemon(cardId) ? cardId : '';
     this.draggedBenchPokemonInstanceId = '';
     if (event.dataTransfer) {
@@ -2306,9 +2308,9 @@ export class GamesPageComponent implements OnInit {
     return card?.supertype === 'Pokémon' && (card.subtypes ?? []).includes('Basic');
   }
 
-  isBasicEnergy(cardId: string): boolean {
+  isAttachableEnergy(cardId: string): boolean {
     const card = this.cardsById[cardId];
-    return card?.supertype === 'Energy' && (card.subtypes ?? []).includes('Basic');
+    return card?.supertype === 'Energy' && (this.hasCardSubtype(card, 'Basic') || this.isSpecialAnyEnergy(card));
   }
 
   isEvolutionPokemon(cardId: string): boolean {
@@ -2319,7 +2321,59 @@ export class GamesPageComponent implements OnInit {
   }
 
   isDraggableHandCard(cardId: string): boolean {
-    return this.isBasicPokemon(cardId) || this.isBasicEnergy(cardId) || this.isEvolutionPokemon(cardId);
+    return this.isBasicPokemon(cardId) || this.isAttachableEnergy(cardId) || this.isEvolutionPokemon(cardId);
+  }
+
+  private isEnergyCompatibleWithPokemon(energyCardId: string, pokemonCardId: string): boolean {
+    const energyCard = this.cardsById[energyCardId];
+    const pokemonCard = this.cardsById[pokemonCardId];
+    if (!energyCard || !pokemonCard || this.isSpecialAnyEnergy(energyCard)) {
+      return true;
+    }
+
+    const energyType = this.cardEnergyType(energyCard);
+    const pokemonTypes = (pokemonCard.types ?? [])
+      .map((type) => this.canonicalEnergyType(type))
+      .filter(Boolean);
+    if (!energyType || pokemonTypes.length === 0) {
+      return true;
+    }
+    return pokemonTypes.includes(energyType);
+  }
+
+  private cardEnergyType(card: Card): string {
+    for (const type of card.types ?? []) {
+      const canonicalType = this.canonicalEnergyType(type);
+      if (canonicalType) {
+        return canonicalType;
+      }
+    }
+    for (const subtype of card.subtypes ?? []) {
+      const canonicalSubtype = this.canonicalEnergyType(subtype);
+      if (canonicalSubtype) {
+        return canonicalSubtype;
+      }
+    }
+
+    const normalizedName = this.normalizeEnergyType(card.name);
+    return this.supportedEnergyTypes.find((type) => {
+      const normalizedType = this.normalizeEnergyType(type);
+      return normalizedName.includes(`${normalizedType} ENERGY`) || normalizedName.includes(`${normalizedType} ENERGIA`);
+    }) ?? '';
+  }
+
+  private canonicalEnergyType(value?: string): string {
+    const normalizedValue = this.normalizeEnergyType(value);
+    return this.supportedEnergyTypes.find((type) => this.normalizeEnergyType(type) === normalizedValue) ?? '';
+  }
+
+  private isSpecialAnyEnergy(card: Card): boolean {
+    const normalizedName = this.normalizeEnergyType(card.name);
+    return normalizedName === 'DOUBLE COLORLESS ENERGY' || normalizedName === 'RAINBOW ENERGY';
+  }
+
+  private normalizeEnergyType(value?: string): string {
+    return value?.trim().toUpperCase() ?? '';
   }
 
   private maybeAutoDraw(game: GameResponse): void {

@@ -571,8 +571,10 @@ class GameServiceTest {
     void attachEnergyMovesBasicEnergyFromHandToActivePokemon() {
         GameEntity game = activeGameWithActiveAndEnergyInHand();
         CardEntity energy = card("xy1-132", "Lightning Energy", "Energy", List.of("Basic"));
+        CardEntity targetPokemon = basicPokemon("xy1-1", "Pikachu", "Lightning");
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
         when(cardRepository.findById("xy1-132")).thenReturn(Optional.of(energy));
+        when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(targetPokemon));
         when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> {
             GameEntity savedGame = invocation.getArgument(0);
             savedGame.getLogs().get(1).setId(2000L);
@@ -594,8 +596,10 @@ class GameServiceTest {
     void attachEnergyMovesBasicEnergyFromHandToBenchPokemon() {
         GameEntity game = activeGameWithBenchAndEnergyInHand();
         CardEntity energy = card("xy1-132", "Lightning Energy", "Energy", List.of("Basic"));
+        CardEntity targetPokemon = basicPokemon("xy1-3", "Pikachu", "Lightning");
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
         when(cardRepository.findById("xy1-132")).thenReturn(Optional.of(energy));
+        when(cardRepository.findById("xy1-3")).thenReturn(Optional.of(targetPokemon));
         when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         GameResponse response = gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "xy1-132", "xy1-3"));
@@ -608,8 +612,10 @@ class GameServiceTest {
     void attachEnergyUsesPokemonInstanceIdWhenRepeatedCardsAreInPlay() {
         GameEntity game = activeGameWithRepeatedPokemonInstancesAndEnergyInHand();
         CardEntity energy = card("xy1-132", "Lightning Energy", "Energy", List.of("Basic"));
+        CardEntity targetPokemon = basicPokemon("xy1-1", "Pikachu", "Lightning");
         when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
         when(cardRepository.findById("xy1-132")).thenReturn(Optional.of(energy));
+        when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(targetPokemon));
         when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         GameResponse response = gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "xy1-132", null, "bench-copy"));
@@ -618,6 +624,93 @@ class GameServiceTest {
                 .containsEntry("bench-copy", List.of("xy1-132"));
         assertThat(response.players().getFirst().attachedEnergyCardIdsByPokemonInstanceId())
                 .containsEntry("active-copy", List.of());
+    }
+
+    @Test
+    void attachEnergyAllowsFireEnergyOnFirePokemon() {
+        GameEntity game = activeGameWithActiveAndEnergyInHand("fire-1");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("fire-1")).thenReturn(Optional.of(energy("fire-1", "Fire Energy", "Fire")));
+        when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(basicPokemon("xy1-1", "Charmander", "Fire")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "fire-1", "xy1-1"));
+
+        assertThat(response.players().getFirst().attachedEnergyCardIdsByPokemonCardId())
+                .containsEntry("xy1-1", List.of("fire-1"));
+    }
+
+    @Test
+    void attachEnergyRejectsFireEnergyOnWaterPokemonAndDoesNotMutateState() {
+        GameEntity game = activeGameWithActiveAndEnergyInHand("fire-1");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("fire-1")).thenReturn(Optional.of(energy("fire-1", "Fire Energy", "Fire")));
+        when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(basicPokemon("xy1-1", "Froakie", "Water")));
+
+        assertThatThrownBy(() -> gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "fire-1", "xy1-1")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("no es compatible")
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+        assertAttachEnergyFailureDidNotChangeState(game, "fire-1");
+    }
+
+    @Test
+    void attachEnergyAllowsWaterEnergyOnWaterPokemon() {
+        GameEntity game = activeGameWithActiveAndEnergyInHand("water-1");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("water-1")).thenReturn(Optional.of(energy("water-1", "Water Energy", "Water")));
+        when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(basicPokemon("xy1-1", "Froakie", "Water")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "water-1", "xy1-1"));
+
+        assertThat(response.players().getFirst().attachedEnergyCardIdsByPokemonCardId())
+                .containsEntry("xy1-1", List.of("water-1"));
+    }
+
+    @Test
+    void attachEnergyAllowsGrassEnergyOnGrassPokemon() {
+        GameEntity game = activeGameWithActiveAndEnergyInHand("grass-1");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("grass-1")).thenReturn(Optional.of(grassEnergy("grass-1")));
+        when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(basicPokemon("xy1-1", "Bulbasaur", "Grass")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "grass-1", "xy1-1"));
+
+        assertThat(response.players().getFirst().attachedEnergyCardIdsByPokemonCardId())
+                .containsEntry("xy1-1", List.of("grass-1"));
+    }
+
+    @Test
+    void attachEnergyAllowsDoubleColorlessEnergyOnAnyPokemon() {
+        GameEntity game = activeGameWithActiveAndEnergyInHand("dce-1");
+        CardEntity doubleColorless = card("dce-1", "Double Colorless Energy", "Energy", List.of("Special"));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("dce-1")).thenReturn(Optional.of(doubleColorless));
+        when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(basicPokemon("xy1-1", "Froakie", "Water")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "dce-1", "xy1-1"));
+
+        assertThat(response.players().getFirst().attachedEnergyCardIdsByPokemonCardId())
+                .containsEntry("xy1-1", List.of("dce-1"));
+    }
+
+    @Test
+    void attachEnergyAllowsRainbowEnergyOnAnyPokemon() {
+        GameEntity game = activeGameWithActiveAndEnergyInHand("rainbow-1");
+        CardEntity rainbow = card("rainbow-1", "Rainbow Energy", "Energy", List.of("Special"));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("rainbow-1")).thenReturn(Optional.of(rainbow));
+        when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(basicPokemon("xy1-1", "Pikachu", "Lightning")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attachEnergy(1L, new AttachEnergyRequest(100L, "rainbow-1", "xy1-1"));
+
+        assertThat(response.players().getFirst().attachedEnergyCardIdsByPokemonCardId())
+                .containsEntry("xy1-1", List.of("rainbow-1"));
     }
 
     @Test
@@ -890,6 +983,72 @@ class GameServiceTest {
         when(gameRepository.findById(1L)).thenReturn(Optional.of(finishedGame()));
 
         assertFinishedAction(() -> gameService.evolvePokemon(1L, new EvolvePokemonRequest(100L, "xy1-braixen", "bench-copy")));
+    }
+
+    @Test
+    void evolvePokemonFailsWhenPlayerAlreadyEvolvedThisTurn() {
+        GameEntity game = activeGameWithEvolutionTarget("fennekin-active", "xy1-fennekin", PokemonZone.ACTIVE, "xy1-braixen");
+        game.getPlayers().getFirst().getPokemonInPlay().add(pokemonInPlay("pansear-bench", "xy1-pansear", PokemonZone.BENCH));
+        game.getPlayers().getFirst().getHandCardIds().add("xy1-simisear");
+        CardEntity fennekin = card("xy1-fennekin", "Fennekin", "Pokémon", List.of("Basic"));
+        CardEntity braixen = evolutionCard("xy1-braixen", "Braixen", "Stage 1", "Fennekin", 90);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(fennekin, braixen));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        gameService.evolvePokemon(1L, new EvolvePokemonRequest(100L, "xy1-braixen", "fennekin-active"));
+
+        assertThatThrownBy(() -> gameService.evolvePokemon(1L, new EvolvePokemonRequest(100L, "xy1-simisear", "pansear-bench")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("ya evolucionó")
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+        assertThat(game.getPlayers().getFirst().getHandCardIds()).contains("xy1-simisear");
+        assertThat(game.getLogs()).filteredOn(log -> "EVOLVE_POKEMON".equals(log.getActionType())).hasSize(1);
+    }
+
+    @Test
+    void failedEvolutionDoesNotConsumeEvolutionForTurn() {
+        GameEntity game = activeGameWithEvolutionTarget("fennekin-active", "xy1-fennekin", PokemonZone.ACTIVE, "xy1-braixen");
+        game.getPlayers().getFirst().getPokemonInPlay().add(pokemonInPlay("pansear-bench", "xy1-pansear", PokemonZone.BENCH));
+        CardEntity fennekin = card("xy1-fennekin", "Fennekin", "Pokémon", List.of("Basic"));
+        CardEntity pansear = card("xy1-pansear", "Pansear", "Pokémon", List.of("Basic"));
+        CardEntity braixen = evolutionCard("xy1-braixen", "Braixen", "Stage 1", "Fennekin", 90);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(pansear, braixen), List.of(fennekin, braixen));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        assertThatThrownBy(() -> gameService.evolvePokemon(1L, new EvolvePokemonRequest(100L, "xy1-braixen", "pansear-bench")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Braixen solo puede evolucionar de Fennekin");
+
+        GameResponse response = gameService.evolvePokemon(1L, new EvolvePokemonRequest(100L, "xy1-braixen", "fennekin-active"));
+
+        assertThat(response.players().getFirst().activePokemon().cardId()).isEqualTo("xy1-braixen");
+        assertThat(response.logs()).filteredOn(log -> "EVOLVE_POKEMON".equals(log.actionType())).hasSize(1);
+    }
+
+    @Test
+    void evolvePokemonAllowsAnotherEvolutionAfterPlayerGetsANewTurn() {
+        GameEntity game = activeGameWithEvolutionTarget("fennekin-active", "xy1-fennekin", PokemonZone.ACTIVE, "xy1-braixen");
+        CardEntity fennekin = card("xy1-fennekin", "Fennekin", "Pokémon", List.of("Basic"));
+        CardEntity braixen = evolutionCard("xy1-braixen", "Braixen", "Stage 1", "Fennekin", 90);
+        CardEntity delphox = evolutionCard("xy1-delphox", "Delphox", "Stage 2", "Braixen", 140);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(fennekin, braixen), List.of(braixen, delphox));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        gameService.evolvePokemon(1L, new EvolvePokemonRequest(100L, "xy1-braixen", "fennekin-active"));
+        gameService.endTurn(1L, new GameActionRequest(100L));
+        gameService.drawCard(1L, new GameActionRequest(200L));
+        gameService.endTurn(1L, new GameActionRequest(200L));
+        gameService.drawCard(1L, new GameActionRequest(100L));
+        game.getPlayers().getFirst().getHandCardIds().add("xy1-delphox");
+
+        GameResponse response = gameService.evolvePokemon(1L, new EvolvePokemonRequest(100L, "xy1-delphox", "fennekin-active"));
+
+        assertThat(response.players().getFirst().activePokemon().cardId()).isEqualTo("xy1-delphox");
+        assertThat(response.logs()).filteredOn(log -> "EVOLVE_POKEMON".equals(log.actionType())).hasSize(2);
     }
 
     @Test
@@ -1690,6 +1849,12 @@ class GameServiceTest {
         return card;
     }
 
+    private CardEntity basicPokemon(String id, String name, String type) {
+        CardEntity card = card(id, name, "Pokémon", List.of("Basic"));
+        card.setTypes(List.of(type));
+        return card;
+    }
+
     private CardEntity evolutionCard(String id, String name, String stageSubtype, String evolvesFrom, int hp) {
         CardEntity card = card(id, name, "Pokémon", List.of(stageSubtype));
         card.setEvolvesFrom(evolvesFrom);
@@ -1810,9 +1975,13 @@ class GameServiceTest {
     }
 
     private GameEntity activeGameWithActiveAndEnergyInHand() {
+        return activeGameWithActiveAndEnergyInHand("xy1-132");
+    }
+
+    private GameEntity activeGameWithActiveAndEnergyInHand(String energyCardId) {
         GameEntity game = activeGame();
         game.setTurnPhase(TurnPhase.MAIN);
-        game.getPlayers().getFirst().getHandCardIds().add("xy1-132");
+        game.getPlayers().getFirst().getHandCardIds().add(energyCardId);
         game.getPlayers().getFirst().setActivePokemonCardId("xy1-1");
         return game;
     }
@@ -1913,6 +2082,18 @@ class GameServiceTest {
         assertThat(game.getTurnPhase()).isEqualTo(TurnPhase.MAIN);
         assertThat(game.getLogs()).extracting(GameLogEntity::getActionType)
                 .doesNotContain("ATTACK", "KNOCK_OUT", "TAKE_PRIZE");
+    }
+
+    private void assertAttachEnergyFailureDidNotChangeState(GameEntity game, String energyCardId) {
+        GamePlayerEntity player = game.getPlayers().getFirst();
+        PokemonInPlay activePokemon = player.getPokemonInPlay().stream()
+                .filter(pokemon -> pokemon.getZone() == PokemonZone.ACTIVE)
+                .findFirst()
+                .orElseThrow();
+        assertThat(player.getHandCardIds()).contains(energyCardId);
+        assertThat(activePokemon.getAttachedEnergyCardIds()).isEmpty();
+        assertThat(player.isEnergyAttachedThisTurn()).isFalse();
+        assertThat(game.getLogs()).extracting(GameLogEntity::getActionType).doesNotContain("ATTACH_ENERGY");
     }
 
     private GameEntity finishedGame() {
