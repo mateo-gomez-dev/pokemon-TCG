@@ -3,6 +3,7 @@ package com.pokemontcg.game.web;
 import com.pokemontcg.game.dto.AttachEnergyRequest;
 import com.pokemontcg.game.dto.AttackRequest;
 import com.pokemontcg.game.dto.CreateGameRequest;
+import com.pokemontcg.game.dto.EvolvePokemonRequest;
 import com.pokemontcg.game.dto.GameActionRequest;
 import com.pokemontcg.game.dto.GameResponse;
 import com.pokemontcg.game.dto.JoinGameRequest;
@@ -81,6 +82,12 @@ public class GameController {
     @Operation(summary = "Promueve un Pokemon de banca al puesto activo")
     public GameResponse promoteActive(@PathVariable Long id, @Valid @RequestBody PromoteActiveRequest request) {
         return gameService.promoteActive(id, request);
+    }
+
+    @PostMapping("/{id}/actions/evolve-pokemon")
+    @Operation(summary = "Evoluciona un Pokemon en juego usando una carta de la mano")
+    public GameResponse evolvePokemon(@PathVariable Long id, @Valid @RequestBody EvolvePokemonRequest request) {
+        return gameService.evolvePokemon(id, request);
     }
 
     @PostMapping("/{id}/actions/attack")

@@ -10,6 +10,7 @@ import com.pokemontcg.deck.service.DeckValidator;
 import com.pokemontcg.game.dto.AttachEnergyRequest;
 import com.pokemontcg.game.dto.AttackRequest;
 import com.pokemontcg.game.dto.CreateGameRequest;
+import com.pokemontcg.game.dto.EvolvePokemonRequest;
 import com.pokemontcg.game.dto.GameActionRequest;
 import com.pokemontcg.game.dto.GameResponse;
 import com.pokemontcg.game.dto.JoinGameRequest;
@@ -757,6 +758,138 @@ class GameServiceTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
                 .isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void evolvePokemonEvolvesBraixenOverFennekinAndKeepsInstanceState() {
+        GameEntity game = activeGameWithEvolutionTarget("fennekin-active", "xy1-fennekin", PokemonZone.ACTIVE, "xy1-braixen");
+        PokemonInPlay target = game.getPlayers().getFirst().getPokemonInPlay().getFirst();
+        target.setDamage(20);
+        target.getAttachedEnergyCardIds().add("xy1-132");
+        CardEntity fennekin = card("xy1-fennekin", "Fennekin", "Pokémon", List.of("Basic"));
+        fennekin.setHp(60);
+        CardEntity braixen = evolutionCard("xy1-braixen", "Braixen", "Stage 1", "Fennekin", 90);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(fennekin, braixen));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.evolvePokemon(1L, new EvolvePokemonRequest(100L, "xy1-braixen", "fennekin-active"));
+
+        assertThat(response.players().getFirst().activePokemon().instanceId()).isEqualTo("fennekin-active");
+        assertThat(response.players().getFirst().activePokemon().cardId()).isEqualTo("xy1-braixen");
+        assertThat(response.players().getFirst().activePokemon().damage()).isEqualTo(20);
+        assertThat(response.players().getFirst().activePokemon().attachedEnergyCardIds()).containsExactly("xy1-132");
+        assertThat(response.players().getFirst().handCardIds()).doesNotContain("xy1-braixen");
+        assertThat(response.logs()).anySatisfy(log -> {
+            assertThat(log.actionType()).isEqualTo("EVOLVE_POKEMON");
+            assertThat(log.message()).contains("Fennekin", "Braixen");
+        });
+    }
+
+    @Test
+    void evolvePokemonEvolvesDelphoxOverBraixen() {
+        GameEntity game = activeGameWithEvolutionTarget("braixen-active", "xy1-braixen", PokemonZone.ACTIVE, "xy1-delphox");
+        CardEntity braixen = evolutionCard("xy1-braixen", "Braixen", "Stage 1", "Fennekin", 90);
+        CardEntity delphox = evolutionCard("xy1-delphox", "Delphox", "Stage 2", "Braixen", 140);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(braixen, delphox));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.evolvePokemon(1L, new EvolvePokemonRequest(100L, "xy1-delphox", "braixen-active"));
+
+        assertThat(response.players().getFirst().activePokemon().instanceId()).isEqualTo("braixen-active");
+        assertThat(response.players().getFirst().activePokemon().cardId()).isEqualTo("xy1-delphox");
+        assertThat(response.players().getFirst().handCardIds()).doesNotContain("xy1-delphox");
+    }
+
+    @Test
+    void evolvePokemonFailsWhenDelphoxIsDroppedDirectlyOnFennekin() {
+        GameEntity game = activeGameWithEvolutionTarget("fennekin-active", "xy1-fennekin", PokemonZone.ACTIVE, "xy1-delphox");
+        CardEntity fennekin = card("xy1-fennekin", "Fennekin", "Pokémon", List.of("Basic"));
+        CardEntity delphox = evolutionCard("xy1-delphox", "Delphox", "Stage 2", "Braixen", 140);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(fennekin, delphox));
+
+        assertThatThrownBy(() -> gameService.evolvePokemon(1L, new EvolvePokemonRequest(100L, "xy1-delphox", "fennekin-active")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Delphox no puede evolucionar directamente de Fennekin")
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void evolvePokemonFailsWhenBraixenIsDroppedOnPansear() {
+        GameEntity game = activeGameWithEvolutionTarget("pansear-active", "xy1-pansear", PokemonZone.ACTIVE, "xy1-braixen");
+        CardEntity pansear = card("xy1-pansear", "Pansear", "Pokémon", List.of("Basic"));
+        CardEntity braixen = evolutionCard("xy1-braixen", "Braixen", "Stage 1", "Fennekin", 90);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(pansear, braixen));
+
+        assertThatThrownBy(() -> gameService.evolvePokemon(1L, new EvolvePokemonRequest(100L, "xy1-braixen", "pansear-active")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Braixen solo puede evolucionar de Fennekin")
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void evolvePokemonFailsWhenTargetBelongsToOpponent() {
+        GameEntity game = activeGameWithEvolutionTarget("fennekin-active", "xy1-fennekin", PokemonZone.ACTIVE, "xy1-braixen");
+        game.getPlayers().get(1).getPokemonInPlay().add(pokemonInPlay("opponent-fennekin", "xy1-fennekin", PokemonZone.BENCH));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+
+        assertThatThrownBy(() -> gameService.evolvePokemon(1L, new EvolvePokemonRequest(100L, "xy1-braixen", "opponent-fennekin")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("No puedes evolucionar un Pokémon rival")
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void evolvePokemonFailsWhenEvolutionCardIsNotInHand() {
+        GameEntity game = activeGameWithEvolutionTarget("fennekin-active", "xy1-fennekin", PokemonZone.ACTIVE, "xy1-braixen");
+        game.getPlayers().getFirst().getHandCardIds().remove("xy1-braixen");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+
+        assertThatThrownBy(() -> gameService.evolvePokemon(1L, new EvolvePokemonRequest(100L, "xy1-braixen", "fennekin-active")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("La carta de evolución no está en tu mano")
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void evolvePokemonFailsWhenEvolutionCardIsNotPokemon() {
+        GameEntity game = activeGameWithEvolutionTarget("fennekin-active", "xy1-fennekin", PokemonZone.ACTIVE, "xy1-trainer");
+        CardEntity fennekin = card("xy1-fennekin", "Fennekin", "Pokémon", List.of("Basic"));
+        CardEntity trainer = card("xy1-trainer", "Potion", "Trainer", List.of("Item"));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(fennekin, trainer));
+
+        assertThatThrownBy(() -> gameService.evolvePokemon(1L, new EvolvePokemonRequest(100L, "xy1-trainer", "fennekin-active")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("La carta seleccionada no es una evolución válida")
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void evolvePokemonFailsWhenPhaseIsNotMain() {
+        GameEntity game = activeGameWithEvolutionTarget("fennekin-active", "xy1-fennekin", PokemonZone.ACTIVE, "xy1-braixen");
+        game.setTurnPhase(TurnPhase.DRAW);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+
+        assertThatThrownBy(() -> gameService.evolvePokemon(1L, new EvolvePokemonRequest(100L, "xy1-braixen", "fennekin-active")))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void evolvePokemonFailsWhenGameIsFinished() {
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(finishedGame()));
+
+        assertFinishedAction(() -> gameService.evolvePokemon(1L, new EvolvePokemonRequest(100L, "xy1-braixen", "bench-copy")));
     }
 
     @Test
@@ -1557,6 +1690,13 @@ class GameServiceTest {
         return card;
     }
 
+    private CardEntity evolutionCard(String id, String name, String stageSubtype, String evolvesFrom, int hp) {
+        CardEntity card = card(id, name, "Pokémon", List.of(stageSubtype));
+        card.setEvolvesFrom(evolvesFrom);
+        card.setHp(hp);
+        return card;
+    }
+
     private CardEntity pokemonWithAttack(String id, String name, int hp, String attackName, int energyCost, String damage) {
         CardEntity card = card(id, name, "Pokémon", List.of("Basic"));
         card.setHp(hp);
@@ -1691,6 +1831,18 @@ class GameServiceTest {
         player.getPokemonInPlay().add(pokemonInPlay("active-copy", "xy1-1", PokemonZone.ACTIVE));
         player.getPokemonInPlay().add(pokemonInPlay("bench-copy", "xy1-1", PokemonZone.BENCH));
         player.setActivePokemonInstanceId("active-copy");
+        return game;
+    }
+
+    private GameEntity activeGameWithEvolutionTarget(String instanceId, String currentCardId, PokemonZone zone, String evolutionCardId) {
+        GameEntity game = activeGame();
+        game.setTurnPhase(TurnPhase.MAIN);
+        GamePlayerEntity player = game.getPlayers().getFirst();
+        player.getHandCardIds().add(evolutionCardId);
+        player.getPokemonInPlay().add(pokemonInPlay(instanceId, currentCardId, zone));
+        if (zone == PokemonZone.ACTIVE) {
+            player.setActivePokemonInstanceId(instanceId);
+        }
         return game;
     }
 

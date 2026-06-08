@@ -6,6 +6,7 @@ import {
   AttachEnergyRequest,
   AttackRequest,
   CreateGameRequest,
+  EvolvePokemonRequest,
   GameActionRequest,
   GameResponse,
   JoinGameRequest,
@@ -58,6 +59,10 @@ export class GamesService {
 
   promoteActive(id: number, request: PromoteActiveRequest): Observable<GameResponse> {
     return this.http.post<GameResponse>(`${this.apiUrl}/${id}/actions/promote-active`, request);
+  }
+
+  evolvePokemon(id: number, request: EvolvePokemonRequest): Observable<GameResponse> {
+    return this.http.post<GameResponse>(`${this.apiUrl}/${id}/actions/evolve-pokemon`, request);
   }
 
   attack(id: number, request: AttackRequest): Observable<GameResponse> {

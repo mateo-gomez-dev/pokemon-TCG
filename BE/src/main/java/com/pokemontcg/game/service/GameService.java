@@ -9,6 +9,7 @@ import com.pokemontcg.deck.service.DeckValidator;
 import com.pokemontcg.game.dto.AttachEnergyRequest;
 import com.pokemontcg.game.dto.AttackRequest;
 import com.pokemontcg.game.dto.CreateGameRequest;
+import com.pokemontcg.game.dto.EvolvePokemonRequest;
 import com.pokemontcg.game.dto.GameActionRequest;
 import com.pokemontcg.game.dto.GameLogResponse;
 import com.pokemontcg.game.dto.GamePlayerResponse;
@@ -50,6 +51,7 @@ import java.util.stream.StreamSupport;
 import static com.pokemontcg.card.domain.CardRules.BASIC_SUBTYPE;
 import static com.pokemontcg.card.domain.CardRules.ENERGY_SUPERTYPE;
 import static com.pokemontcg.card.domain.CardRules.POKEMON_SUPERTYPE;
+import static com.pokemontcg.card.domain.CardRules.hasAnySubtype;
 import static com.pokemontcg.card.domain.CardRules.hasSubtype;
 
 @Service
@@ -65,6 +67,7 @@ public class GameService {
     private static final int PRIZE_CARDS_START_INDEX = INITIAL_HAND_SIZE;
     private static final int REMAINING_DECK_START_INDEX = INITIAL_HAND_SIZE + PRIZE_CARD_COUNT;
     private static final String COLORLESS_ENERGY_TYPE = "Colorless";
+    private static final Set<String> EVOLUTION_SUBTYPES = Set.of("STAGE 1", "STAGE 2", "MEGA");
     private static final Set<String> SUPPORTED_ENERGY_TYPES = Set.of(
             "Grass", "Fire", "Water", "Lightning", "Psychic", "Fighting", "Darkness", "Metal", "Fairy", "Dragon", COLORLESS_ENERGY_TYPE
     );
@@ -276,6 +279,33 @@ public class GameService {
     }
 
     @Transactional
+    public GameResponse evolvePokemon(Long gameId, EvolvePokemonRequest request) {
+        GameEntity game = findActiveGameForCurrentPlayer(gameId, request.playerId());
+        assertMainPhase(game);
+
+        GamePlayerEntity player = findPlayer(game, request.playerId());
+        assertCardInList(player.getHandCardIds(), request.evolutionCardId(), "La carta de evolución no está en tu mano.");
+        PokemonInPlay targetPokemon = findPokemonByInstanceId(player, request.targetPokemonInstanceId(), "No puedes evolucionar un Pokémon rival.");
+        if (targetPokemon.getZone() != PokemonZone.ACTIVE && targetPokemon.getZone() != PokemonZone.BENCH) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "El Pokémon objetivo no está en juego.");
+        }
+
+        Map<String, CardEntity> cardsById = findCardsById(List.of(targetPokemon.getCardId(), request.evolutionCardId()));
+        CardEntity currentCard = findCard(cardsById, targetPokemon.getCardId(), "Pokemon objetivo no encontrado");
+        CardEntity evolutionCard = findCard(cardsById, request.evolutionCardId(), "Carta de evolución no encontrada");
+        assertEvolutionCard(evolutionCard);
+        assertCanEvolve(currentCard, evolutionCard);
+
+        player.getHandCardIds().remove(request.evolutionCardId());
+        targetPokemon.setCardId(request.evolutionCardId());
+        syncDerivedPokemonFields(player);
+        addLog(game, player.getId(), "EVOLVE_POKEMON", "Jugador " + player.getPlayerName()
+                + " evolucionó " + currentCard.getName() + " a " + evolutionCard.getName() + ".");
+
+        return toResponse(gameRepository.save(game));
+    }
+
+    @Transactional
     public GameResponse attack(Long gameId, AttackRequest request) {
         GameEntity game = findActiveGameForCurrentPlayer(gameId, request.playerId());
         assertMainPhase(game);
@@ -441,6 +471,43 @@ public class GameService {
         if (!hasSubtype(card, BASIC_SUBTYPE)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La energia no es Basica");
         }
+    }
+
+    private void assertEvolutionCard(CardEntity card) {
+        if (!POKEMON_SUPERTYPE.equalsIgnoreCase(card.getSupertype())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La carta seleccionada no es una evolución válida.");
+        }
+        if (!hasAnySubtype(card, EVOLUTION_SUBTYPES) || card.getEvolvesFrom() == null || card.getEvolvesFrom().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La carta seleccionada no es una evolución válida.");
+        }
+    }
+
+    private void assertCanEvolve(CardEntity currentCard, CardEntity evolutionCard) {
+        String expectedPreviousName = evolutionCard.getEvolvesFrom();
+        if (!cardNamesMatch(currentCard.getName(), expectedPreviousName)) {
+            if (hasSubtype(evolutionCard, "Stage 2") && hasSubtype(currentCard, BASIC_SUBTYPE)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, evolutionCard.getName()
+                        + " no puede evolucionar directamente de " + currentCard.getName() + ".");
+            }
+            throw new ResponseStatusException(HttpStatus.CONFLICT, evolutionCard.getName()
+                    + " solo puede evolucionar de " + expectedPreviousName + ".");
+        }
+        if (hasSubtype(evolutionCard, "Stage 1") && !hasSubtype(currentCard, BASIC_SUBTYPE)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, evolutionCard.getName()
+                    + " solo puede evolucionar de " + expectedPreviousName + ".");
+        }
+        if (hasSubtype(evolutionCard, "Stage 2") && !hasSubtype(currentCard, "Stage 1")) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, evolutionCard.getName()
+                    + " solo puede evolucionar de " + expectedPreviousName + ".");
+        }
+    }
+
+    private boolean cardNamesMatch(String firstName, String secondName) {
+        return normalizeCardName(firstName).equals(normalizeCardName(secondName));
+    }
+
+    private String normalizeCardName(String value) {
+        return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
     }
 
     private CardEntity findCardOrBadRequest(String cardId, String errorMessage) {

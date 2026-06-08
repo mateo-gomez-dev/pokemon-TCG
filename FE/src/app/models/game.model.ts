@@ -24,6 +24,11 @@ export interface PromoteActiveRequest extends GameActionRequest {
   pokemonInstanceId: string;
 }
 
+export interface EvolvePokemonRequest extends GameActionRequest {
+  evolutionCardId: string;
+  targetPokemonInstanceId: string;
+}
+
 export interface AttackRequest extends GameActionRequest {
   attackName?: string;
   attackIndex?: number;

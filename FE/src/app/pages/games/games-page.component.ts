@@ -16,6 +16,15 @@ interface SelectedCardDetail {
   pokemon?: PokemonInPlayResponse;
 }
 
+interface AttackAnimationState {
+  attackerInstanceId: string;
+  defenderInstanceId: string;
+}
+
+interface DrawAnimationState {
+  key: string;
+}
+
 @Component({
   selector: 'app-games-page',
   standalone: true,
@@ -107,6 +116,9 @@ interface SelectedCardDetail {
         <section class="board-wrap" *ngIf="selectedGame; else emptyBoard">
           <section class="battle-table">
             <div class="table-aura"></div>
+            <div class="draw-animation-card" *ngIf="drawAnimation">
+              <div class="card-back flying-draw-card"></div>
+            </div>
 
             <header class="match-strip">
               <div>
@@ -159,7 +171,12 @@ interface SelectedCardDetail {
               <div class="active-column">
                 <div class="active-slot opponent-active" *ngIf="opponentPlayer as opponent">
                   <ng-container *ngIf="opponent.activePokemon as pokemon; else noOpponentActive">
-                    <article class="tcg-card active-card" [class.glow]="opponent.id === selectedGame.currentPlayerId" (click)="openCardDetail(pokemon.cardId, pokemon)">
+                    <article
+                      class="tcg-card active-card"
+                      [class.glow]="opponent.id === selectedGame.currentPlayerId"
+                      [class.attack-hit]="isAttackDefender(pokemon)"
+                      (click)="openCardDetail(pokemon.cardId, pokemon)"
+                    >
                       <ng-container *ngTemplateOutlet="cardFace; context: { cardId: pokemon.cardId, player: opponent, compact: false, pokemon: pokemon }"></ng-container>
                     </article>
                   </ng-container>
@@ -180,7 +197,16 @@ interface SelectedCardDetail {
                   (drop)="onActiveDrop($event)"
                 >
                   <ng-container *ngIf="player.activePokemon as pokemon; else noPlayerActive">
-                    <article class="tcg-card active-card" [class.glow]="player.id === selectedGame.currentPlayerId" (click)="openCardDetail(pokemon.cardId, pokemon)">
+                    <article
+                      class="tcg-card active-card attack-source"
+                      [class.glow]="player.id === selectedGame.currentPlayerId"
+                      [class.attack-lunge]="isAttackAttacker(pokemon)"
+                      [class.energy-drop-target]="canAttachEnergyTo(pokemon)"
+                      [class.evolution-drop-target]="canEvolvePokemonTo(pokemon)"
+                      (dragover)="onPokemonDragOver($event, pokemon)"
+                      (drop)="onPokemonDrop($event, pokemon)"
+                      (click)="onPlayerActivePokemonClick($event, pokemon, player)"
+                    >
                       <ng-container *ngTemplateOutlet="cardFace; context: { cardId: pokemon.cardId, player: player, compact: false, pokemon: pokemon }"></ng-container>
                     </article>
                   </ng-container>
@@ -206,7 +232,11 @@ interface SelectedCardDetail {
                 <ng-container *ngIf="player.benchPokemon[slot] as pokemon; else emptyPlayerBench">
                   <article
                     class="tcg-card bench-card"
+                    [class.energy-drop-target]="canAttachEnergyTo(pokemon)"
+                    [class.evolution-drop-target]="canEvolvePokemonTo(pokemon)"
                     [draggable]="player.id === currentPlayer?.id"
+                    (dragover)="onPokemonDragOver($event, pokemon)"
+                    (drop)="onPokemonDrop($event, pokemon)"
                     (dragstart)="onBenchPokemonDragStart($event, pokemon)"
                     (dragend)="clearDragState()"
                     (click)="openCardDetail(pokemon.cardId, pokemon)"
@@ -236,8 +266,10 @@ interface SelectedCardDetail {
                 class="tcg-card hand-card"
                 *ngFor="let cardId of player.handCardIds; let i = index; trackBy: trackByIndexedCardId"
                 [style.transform]="handTransform(i, player.handCardIds.length)"
-                [class.selectable]="isBasicPokemon(cardId) || isBasicEnergy(cardId)"
-                [draggable]="isBasicPokemon(cardId)"
+                [class.selectable]="isBasicPokemon(cardId) || isBasicEnergy(cardId) || isEvolutionPokemon(cardId)"
+                [class.energy-card]="isBasicEnergy(cardId)"
+                [class.evolution-card]="isEvolutionPokemon(cardId)"
+                [draggable]="isDraggableHandCard(cardId)"
                 (dragstart)="onHandCardDragStart($event, cardId)"
                 (dragend)="clearDragState()"
                 (click)="openCardDetail(cardId)"
@@ -247,69 +279,17 @@ interface SelectedCardDetail {
             </section>
           </section>
 
-          <aside class="floating-actions" *ngIf="currentPlayer">
-            <strong>Acciones</strong>
+          <aside class="floating-actions visual-actions" *ngIf="currentPlayer">
+            <strong>{{ currentPlayer.playerName }}</strong>
+            <span>Estado: {{ selectedGame.status }}</span>
+            <span>Fase: {{ selectedGame.turnPhase || '-' }}</span>
+            <span>{{ selectedGame.turnPhase === 'DRAW' ? 'Robando carta automaticamente...' : 'Arrastra cartas o toca tu activo.' }}</span>
             <div class="action-debug" *ngIf="showDebugInfo">
               <span>Estado: {{ selectedGame.status }}</span>
               <span>Fase: {{ selectedGame.turnPhase }}</span>
               <span>CurrentPlayerId: {{ selectedGame.currentPlayerId }}</span>
               <span>Jugador actual: {{ currentPlayer.playerName }}</span>
             </div>
-            <button type="button" (click)="drawCard()" [disabled]="!canDrawCard()">
-              Robar carta
-            </button>
-
-            <label>
-              Pokemon Basico
-              <select [(ngModel)]="selectedBasicCardId">
-                <option value="">Seleccionar</option>
-                <option *ngFor="let cardId of basicCardsInHand; trackBy: trackByIndexedCardId" [value]="cardId">{{ cardLabel(cardId) }}</option>
-              </select>
-            </label>
-            <button type="button" (click)="playBasicPokemon()" [disabled]="!canPlayBasicPokemon()">
-              Jugar basico
-            </button>
-
-            <label>
-              Energia
-              <select [(ngModel)]="selectedEnergyCardId">
-                <option value="">Seleccionar</option>
-                <option *ngFor="let cardId of energyCardsInHand; trackBy: trackByIndexedCardId" [value]="cardId">{{ cardLabel(cardId) }}</option>
-              </select>
-            </label>
-            <label>
-              Objetivo
-              <select [(ngModel)]="selectedTargetPokemonInstanceId">
-                <option value="">Seleccionar</option>
-                <option *ngFor="let target of energyTargetPokemon; trackBy: trackByPokemonInstanceId" [value]="target.instanceId">
-                  {{ pokemonOptionLabel(target) }}
-                </option>
-              </select>
-            </label>
-            <button type="button" (click)="attachEnergy()" [disabled]="!canAttachEnergy()">
-              Unir energia
-            </button>
-            <label *ngIf="canPromoteActive()">
-              Promover a activo
-              <select [(ngModel)]="selectedPromotionPokemonInstanceId">
-                <option value="">Seleccionar</option>
-                <option *ngFor="let pokemon of currentPlayer.benchPokemon; trackBy: trackByPokemonInstanceId" [value]="pokemon.instanceId">
-                  {{ pokemonOptionLabel(pokemon) }}
-                </option>
-              </select>
-            </label>
-            <button type="button" *ngIf="canPromoteActive()" (click)="promoteActive()" [disabled]="!selectedPromotionPokemonInstanceId">
-              Promover activo
-            </button>
-            <label>
-              Ataque
-              <select [(ngModel)]="selectedAttackName">
-                <option value="">Primer ataque disponible</option>
-                <option *ngFor="let attack of activePokemonAttacks; trackBy: trackByAttackName" [value]="attack.name">
-                  {{ attackLabel(attack) }}
-                </option>
-              </select>
-            </label>
             <div class="action-debug attack-debug" *ngIf="showDebugInfo">
               <span>Ataque seleccionado: {{ selectedAttackName || '-' }}</span>
               <span>Ataques disponibles: {{ activePokemonAttacks.length }}</span>
@@ -317,9 +297,6 @@ interface SelectedCardDetail {
               <span>Activo rival: {{ opponentActivePokemonCardId || '-' }}</span>
               <span>Puede atacar: {{ canAttack() ? 'si' : 'no' }}</span>
             </div>
-            <button type="button" class="attack-button" (click)="attack()" [disabled]="!canAttack()">
-              Atacar
-            </button>
             <button type="button" class="end-turn" (click)="endTurn()" [disabled]="!canEndTurn()">
               Acabar turno
             </button>
@@ -361,6 +338,38 @@ interface SelectedCardDetail {
         </ng-template>
       </section>
 
+      <section class="attack-overlay-backdrop" *ngIf="selectedAttackPokemon as pokemon" (click)="closeAttackOverlay()">
+        <article class="attack-overlay-panel" (click)="$event.stopPropagation()">
+          <button type="button" class="modal-close" (click)="closeAttackOverlay()">X</button>
+          <div class="attack-card-preview">
+            <img *ngIf="cardLargeImageUrl(pokemon.cardId)" [src]="cardLargeImageUrl(pokemon.cardId)" [alt]="cardName(pokemon.cardId)" />
+            <div class="attack-card-placeholder" *ngIf="!cardLargeImageUrl(pokemon.cardId)">
+              <strong>{{ cardName(pokemon.cardId) }}</strong>
+              <span>{{ cardType(pokemon.cardId) }}</span>
+            </div>
+            <button type="button" class="detail-link" (click)="openAttackPokemonDetail(pokemon)">Ver detalle</button>
+          </div>
+          <div class="attack-menu">
+            <p class="eyebrow">Ataques disponibles</p>
+            <h2>{{ cardName(pokemon.cardId) }}</h2>
+            <p class="muted">PS {{ pokemon.remainingHp }}/{{ pokemon.hp || '-' }} · Energias {{ pokemon.attachedEnergyCount }}</p>
+
+            <button
+              type="button"
+              class="attack-choice"
+              *ngFor="let attack of selectedAttackPokemonAttacks; let i = index; trackBy: trackByAttackName"
+              [disabled]="attackInFlight"
+              (click)="useAttack(attack, i)"
+            >
+              <span class="attack-cost">{{ attackCostText(attack) }}</span>
+              <strong>{{ attack.name || 'Ataque' }}</strong>
+              <span class="attack-damage">{{ attack.damage || '-' }}</span>
+              <small *ngIf="attack.text">{{ attack.text }}</small>
+            </button>
+          </div>
+        </article>
+      </section>
+
       <section class="card-modal-backdrop" *ngIf="selectedCardDetail as detail" (click)="closeCardDetail()">
         <article class="card-modal" (click)="$event.stopPropagation()">
           <button type="button" class="modal-close" (click)="closeCardDetail()">X</button>
@@ -370,6 +379,8 @@ interface SelectedCardDetail {
             <h2>{{ cardDetailName(detail) }}</h2>
             <p class="muted">ID {{ detail.cardId }}</p>
             <p>{{ cardDetailType(detail) }}</p>
+            <p *ngIf="detail.card?.subtypes?.length">Subtipos: {{ detail.card?.subtypes?.join(', ') }}</p>
+            <p *ngIf="detail.card?.evolvesFrom">Evoluciona de: {{ detail.card?.evolvesFrom }}</p>
             <p *ngIf="detail.card?.hp">HP {{ detail.card?.hp }}</p>
             <p *ngIf="detail.card?.types?.length">Tipos: {{ detail.card?.types?.join(', ') }}</p>
             <p *ngIf="detail.pokemon">Daño actual: {{ detail.pokemon.damage }} - Energías: {{ detail.pokemon.attachedEnergyCount }}</p>
@@ -588,7 +599,7 @@ interface SelectedCardDetail {
     .board-wrap {
       display: grid;
       gap: 1rem;
-      grid-template-columns: minmax(0, 1fr) 230px;
+      grid-template-columns: minmax(0, 1fr);
     }
 
     .battle-table {
@@ -617,6 +628,20 @@ interface SelectedCardDetail {
       top: 50%;
       transform: translate(-50%, -50%);
       width: min(86%, 820px);
+    }
+
+    .draw-animation-card {
+      animation: draw-card-flight 680ms cubic-bezier(0.2, 0.8, 0.25, 1) forwards;
+      left: calc(100% - 170px);
+      pointer-events: none;
+      position: absolute;
+      top: 52%;
+      z-index: 30;
+    }
+
+    .flying-draw-card {
+      height: 112px;
+      width: 78px;
     }
 
     .match-strip {
@@ -887,6 +912,43 @@ interface SelectedCardDetail {
       box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.42), 0 18px 32px rgba(14, 165, 233, 0.28);
     }
 
+    .hand-card.energy-card {
+      box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.46), 0 18px 32px rgba(234, 179, 8, 0.28);
+    }
+
+    .hand-card.evolution-card {
+      box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.42), 0 18px 32px rgba(124, 58, 237, 0.26);
+    }
+
+    .attack-source {
+      cursor: pointer;
+    }
+
+    .attack-source:hover {
+      transform: translateY(-4px) scale(1.03);
+      transition: transform 160ms ease;
+    }
+
+    .attack-lunge {
+      animation: pokemon-attack-lunge 560ms cubic-bezier(0.2, 0.88, 0.24, 1.12);
+      z-index: 15;
+    }
+
+    .attack-hit {
+      animation: pokemon-hit-shake 560ms ease-in-out;
+      z-index: 14;
+    }
+
+    .energy-drop-target {
+      border-color: #facc15;
+      box-shadow: 0 0 0 5px rgba(250, 204, 21, 0.34), 0 0 34px rgba(250, 204, 21, 0.58), 0 18px 35px rgba(15, 23, 42, 0.2);
+    }
+
+    .evolution-drop-target {
+      border-color: #a855f7;
+      box-shadow: 0 0 0 5px rgba(168, 85, 247, 0.3), 0 0 34px rgba(124, 58, 237, 0.5), 0 18px 35px rgba(15, 23, 42, 0.2);
+    }
+
     .glow {
       box-shadow: 0 0 0 5px rgba(34, 211, 238, 0.38), 0 0 34px rgba(34, 211, 238, 0.72), 0 18px 35px rgba(15, 23, 42, 0.2);
     }
@@ -967,19 +1029,29 @@ interface SelectedCardDetail {
     }
 
     .floating-actions {
-      align-self: start;
       background: rgba(255, 255, 255, 0.86);
       border: 1px solid rgba(186, 230, 253, 0.95);
       border-radius: 28px;
       box-shadow: 0 24px 55px rgba(15, 23, 42, 0.16);
+      bottom: 1.25rem;
+      display: grid;
+      gap: 0.45rem;
+      min-width: 210px;
       padding: 1rem;
-      position: sticky;
-      top: 92px;
+      position: fixed;
+      right: 1.25rem;
+      z-index: 60;
     }
 
     .floating-actions strong {
       color: #075985;
       font-size: 1.1rem;
+    }
+
+    .visual-actions > span {
+      color: #475569;
+      font-size: 0.82rem;
+      font-weight: 800;
     }
 
     .action-debug {
@@ -999,10 +1071,6 @@ interface SelectedCardDetail {
       font-size: 1rem;
       margin-top: 0.25rem;
       padding: 0.95rem 1rem;
-    }
-
-    .floating-actions .attack-button {
-      background: linear-gradient(135deg, #f97316, #ef4444);
     }
 
     .damage-badge {
@@ -1075,6 +1143,126 @@ interface SelectedCardDetail {
       z-index: 100;
     }
 
+    .attack-overlay-backdrop {
+      align-items: center;
+      background: rgba(15, 23, 42, 0.66);
+      display: flex;
+      inset: 0;
+      justify-content: center;
+      padding: 1rem;
+      position: fixed;
+      z-index: 110;
+    }
+
+    .attack-overlay-panel {
+      background:
+        radial-gradient(circle at 22% 12%, rgba(250, 204, 21, 0.22), transparent 34%),
+        linear-gradient(145deg, rgba(248, 250, 252, 0.98), rgba(219, 234, 254, 0.96));
+      border: 1px solid rgba(255, 255, 255, 0.88);
+      border-radius: 34px;
+      box-shadow: 0 32px 90px rgba(15, 23, 42, 0.44);
+      display: grid;
+      gap: 1.25rem;
+      grid-template-columns: minmax(190px, 300px) minmax(280px, 1fr);
+      max-height: min(90vh, 820px);
+      max-width: min(94vw, 900px);
+      overflow: auto;
+      padding: 1.25rem;
+      position: relative;
+    }
+
+    .attack-card-preview {
+      align-content: start;
+      display: grid;
+      gap: 0.75rem;
+      justify-items: center;
+    }
+
+    .attack-card-preview img,
+    .attack-card-placeholder {
+      background: white;
+      border: 6px solid rgba(255, 255, 255, 0.94);
+      border-radius: 22px;
+      box-shadow: 0 20px 48px rgba(15, 23, 42, 0.28);
+      width: min(100%, 270px);
+    }
+
+    .attack-card-placeholder {
+      align-content: center;
+      display: grid;
+      min-height: 360px;
+      padding: 1rem;
+      text-align: center;
+    }
+
+    .detail-link {
+      background: rgba(15, 23, 42, 0.86);
+      border: 1px solid rgba(255, 255, 255, 0.7);
+      border-radius: 999px;
+      color: white;
+      font-weight: 900;
+      padding: 0.7rem 1rem;
+    }
+
+    .attack-menu {
+      display: grid;
+      gap: 0.8rem;
+    }
+
+    .attack-menu h2 {
+      font-size: clamp(1.6rem, 3vw, 2.6rem);
+      margin: 0;
+    }
+
+    .attack-choice {
+      align-items: center;
+      background: linear-gradient(135deg, #ffffff, #e0f2fe);
+      border: 1px solid rgba(56, 189, 248, 0.7);
+      border-radius: 22px;
+      box-shadow: 0 12px 28px rgba(14, 165, 233, 0.16);
+      color: #0f172a;
+      display: grid;
+      gap: 0.35rem;
+      grid-template-columns: minmax(90px, auto) 1fr auto;
+      padding: 0.9rem 1rem;
+      text-align: left;
+    }
+
+    .attack-choice:hover {
+      border-color: #facc15;
+      box-shadow: 0 0 0 4px rgba(250, 204, 21, 0.22), 0 14px 30px rgba(14, 165, 233, 0.2);
+      transform: translateY(-1px);
+    }
+
+    .attack-choice:disabled {
+      cursor: wait;
+      opacity: 0.72;
+      transform: none;
+    }
+
+    .attack-choice small {
+      color: #475569;
+      grid-column: 2 / -1;
+      line-height: 1.35;
+    }
+
+    .attack-cost {
+      background: #fef3c7;
+      border: 1px solid #facc15;
+      border-radius: 999px;
+      color: #713f12;
+      font-size: 0.78rem;
+      font-weight: 900;
+      padding: 0.32rem 0.62rem;
+      text-align: center;
+    }
+
+    .attack-damage {
+      color: #dc2626;
+      font-size: 1.25rem;
+      font-weight: 1000;
+    }
+
     .card-modal {
       background: rgba(255, 255, 255, 0.96);
       border: 1px solid rgba(186, 230, 253, 0.9);
@@ -1133,8 +1321,7 @@ interface SelectedCardDetail {
         grid-template-columns: 1fr;
       }
 
-      .control-rail,
-      .floating-actions {
+      .control-rail {
         position: static;
       }
 
@@ -1210,14 +1397,101 @@ interface SelectedCardDetail {
         max-width: 96vw;
       }
 
+      .attack-overlay-panel {
+        grid-template-columns: 1fr;
+        max-width: 96vw;
+      }
+
       .card-modal img {
         margin: 0 auto;
         max-width: 240px;
+      }
+
+      .attack-card-preview img,
+      .attack-card-placeholder {
+        max-width: 240px;
+      }
+
+      .attack-choice {
+        grid-template-columns: 1fr auto;
+      }
+
+      .attack-cost,
+      .attack-choice small {
+        grid-column: 1 / -1;
+      }
+
+      .floating-actions {
+        bottom: 0.7rem;
+        left: 0.7rem;
+        right: 0.7rem;
+      }
+    }
+
+    @keyframes pokemon-attack-lunge {
+      0% {
+        transform: translateY(0) scale(1);
+      }
+      38% {
+        filter: brightness(1.12);
+        transform: translateY(-78px) scale(1.08) rotate(-2deg);
+      }
+      62% {
+        transform: translateY(-54px) scale(1.04) rotate(1deg);
+      }
+      100% {
+        filter: brightness(1);
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @keyframes pokemon-hit-shake {
+      0% {
+        filter: brightness(1);
+        transform: translateX(0);
+      }
+      18% {
+        filter: brightness(1.75) saturate(1.35);
+        transform: translateX(-8px) rotate(-2deg);
+      }
+      34% {
+        transform: translateX(10px) rotate(2deg);
+      }
+      50% {
+        box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.32), 0 0 32px rgba(239, 68, 68, 0.55), 0 18px 35px rgba(15, 23, 42, 0.2);
+        transform: translateX(-6px) rotate(-1deg);
+      }
+      70% {
+        transform: translateX(4px) rotate(1deg);
+      }
+      100% {
+        filter: brightness(1);
+        transform: translateX(0);
+      }
+    }
+
+    @keyframes draw-card-flight {
+      0% {
+        opacity: 0;
+        transform: translate(0, -28px) scale(0.82) rotate(7deg);
+      }
+      14% {
+        opacity: 1;
+      }
+      72% {
+        opacity: 1;
+        transform: translate(-42vw, 210px) scale(1.05) rotate(-10deg);
+      }
+      100% {
+        opacity: 0;
+        transform: translate(-46vw, 240px) scale(0.92) rotate(-14deg);
       }
     }
   `]
 })
 export class GamesPageComponent implements OnInit {
+  private readonly attackAnimationMs = 560;
+  private readonly drawAnimationMs = 680;
   readonly benchSlots = [0, 1, 2, 3, 4];
   readonly showDebugInfo = false;
   decks: DeckResponse[] = [];
@@ -1234,8 +1508,16 @@ export class GamesPageComponent implements OnInit {
   selectedPromotionPokemonInstanceId = '';
   selectedAttackName = '';
   draggedHandCardId = '';
+  draggedEnergyCardId = '';
+  draggedEvolutionCardId = '';
   draggedBenchPokemonInstanceId = '';
+  selectedAttackPokemon: PokemonInPlayResponse | null = null;
+  attackAnimation: AttackAnimationState | null = null;
+  drawAnimation: DrawAnimationState | null = null;
+  attackInFlight = false;
   selectedCardDetail: SelectedCardDetail | null = null;
+  private lastAutoDrawKey = '';
+  private autoDrawInFlightKey = '';
   error = '';
   message = '';
 
@@ -1314,6 +1596,13 @@ export class GamesPageComponent implements OnInit {
     return this.cardsById[activeCardId]?.attacks ?? [];
   }
 
+  get selectedAttackPokemonAttacks(): CardAttack[] {
+    if (!this.selectedAttackPokemon) {
+      return [];
+    }
+    return this.attacksForPokemon(this.selectedAttackPokemon);
+  }
+
   get activePokemonCardId(): string {
     return this.currentPlayer?.activePokemon?.cardId ?? '';
   }
@@ -1359,7 +1648,7 @@ export class GamesPageComponent implements OnInit {
   }
 
   canEndTurn(): boolean {
-    return this.isActiveGame();
+    return this.isActiveGame() && this.isMainPhase();
   }
 
   canAttack(): boolean {
@@ -1402,7 +1691,49 @@ export class GamesPageComponent implements OnInit {
       && this.currentPlayer.benchPokemon.length < this.benchSlots.length;
   }
 
+  canAttachEnergyTo(pokemon: PokemonInPlayResponse): boolean {
+    return this.isActiveGame()
+      && this.isMainPhase()
+      && !!this.currentPlayer
+      && !!this.draggedEnergyCardId
+      && this.energyTargetPokemon.some((target) => target.instanceId === pokemon.instanceId);
+  }
+
+  canEvolvePokemonTo(pokemon: PokemonInPlayResponse): boolean {
+    if (!this.canDropEvolutionOn(pokemon)) {
+      return false;
+    }
+
+    const evolutionCard = this.cardsById[this.draggedEvolutionCardId];
+    const targetCard = this.cardsById[pokemon.cardId];
+    if (!evolutionCard || !targetCard || !evolutionCard.evolvesFrom) {
+      return false;
+    }
+    if (!this.cardNamesMatch(evolutionCard.evolvesFrom, targetCard.name)) {
+      return false;
+    }
+    if (this.hasCardSubtype(evolutionCard, 'Stage 1')) {
+      return this.hasCardSubtype(targetCard, 'Basic');
+    }
+    if (this.hasCardSubtype(evolutionCard, 'Stage 2')) {
+      return this.hasCardSubtype(targetCard, 'Stage 1');
+    }
+    return this.hasCardSubtype(evolutionCard, 'MEGA');
+  }
+
+  canDropEvolutionOn(pokemon: PokemonInPlayResponse): boolean {
+    if (!this.isActiveGame() || !this.isMainPhase() || !this.currentPlayer || !this.draggedEvolutionCardId) {
+      return false;
+    }
+    return this.energyTargetPokemon.some((target) => target.instanceId === pokemon.instanceId);
+  }
+
   @HostListener('document:keydown.escape')
+  closeOverlays(): void {
+    this.closeCardDetail();
+    this.closeAttackOverlay();
+  }
+
   closeCardDetail(): void {
     this.selectedCardDetail = null;
   }
@@ -1447,8 +1778,11 @@ export class GamesPageComponent implements OnInit {
     this.gamesService.getGames().subscribe({
       next: (games) => {
         this.games = games;
-        if (this.selectedGame) {
-          this.selectedGame = games.find((game) => game.id === this.selectedGame?.id) ?? this.selectedGame;
+        if (this.selectedGame && !this.hasPendingVisualAnimation()) {
+          const selectedGame = games.find((game) => game.id === this.selectedGame?.id);
+          if (selectedGame) {
+            this.setSelectedGame(selectedGame);
+          }
         }
       },
       error: (error) => {
@@ -1549,7 +1883,7 @@ export class GamesPageComponent implements OnInit {
   }
 
   attack(): void {
-    if (!this.selectedGame?.currentPlayerId || this.activePokemonAttacks.length === 0) {
+    if (!this.selectedGame?.currentPlayerId || this.activePokemonAttacks.length === 0 || this.attackInFlight) {
       return;
     }
     const request = this.selectedAttackName
@@ -1560,6 +1894,117 @@ export class GamesPageComponent implements OnInit {
       'Ataque realizado.',
       'No se pudo atacar.'
     );
+  }
+
+  onPlayerActivePokemonClick(event: MouseEvent, pokemon: PokemonInPlayResponse, player: GamePlayerResponse): void {
+    event.stopPropagation();
+    const blockedReason = this.attackBlockedReason(pokemon, player);
+    if (blockedReason) {
+      this.error = blockedReason;
+      return;
+    }
+    this.error = '';
+    this.selectedAttackPokemon = pokemon;
+  }
+
+  closeAttackOverlay(): void {
+    this.selectedAttackPokemon = null;
+  }
+
+  openAttackPokemonDetail(pokemon: PokemonInPlayResponse): void {
+    this.closeAttackOverlay();
+    this.openCardDetail(pokemon.cardId, pokemon);
+  }
+
+  useAttack(attack: CardAttack, attackIndex: number): void {
+    if (!this.selectedGame?.currentPlayerId || this.attackInFlight) {
+      return;
+    }
+    const animation = this.currentAttackAnimationState();
+    if (!animation) {
+      return;
+    }
+    const request = attack.name
+      ? { playerId: this.selectedGame.currentPlayerId, attackName: attack.name }
+      : { playerId: this.selectedGame.currentPlayerId, attackIndex };
+
+    this.attackInFlight = true;
+    this.error = '';
+    this.message = '';
+    this.gamesService.attack(this.selectedGame.id, request).subscribe({
+      next: (game) => {
+        this.selectedAttackPokemon = null;
+        this.playAttackAnimation(animation, game);
+      },
+      error: (error) => {
+        this.attackInFlight = false;
+        this.error = this.backendError(error, 'No se pudo atacar.');
+      }
+    });
+  }
+
+  attackCostText(attack: CardAttack): string {
+    return attack.cost?.length ? attack.cost.map((cost) => `[${cost}]`).join(' ') : 'Sin costo';
+  }
+
+  private attackBlockedReason(pokemon: PokemonInPlayResponse, player: GamePlayerResponse): string {
+    if (this.attackInFlight || this.attackAnimation) {
+      return 'El ataque está en curso.';
+    }
+    if (!this.selectedGame || this.selectedGame.status !== 'ACTIVE') {
+      return 'La partida no está activa.';
+    }
+    if (!this.currentPlayer || player.id !== this.currentPlayer.id || this.selectedGame.currentPlayerId !== player.id) {
+      return 'No es tu turno.';
+    }
+    if (this.selectedGame.turnPhase === 'DRAW') {
+      return 'Primero debes robar carta.';
+    }
+    if (this.selectedGame.turnPhase !== 'MAIN') {
+      return 'La accion solo se puede realizar en fase MAIN.';
+    }
+    if (!this.opponentPlayer?.activePokemon) {
+      return 'El rival no tiene Pokemon activo.';
+    }
+    if (this.attacksForPokemon(pokemon).length === 0) {
+      return 'Este Pokémon no tiene ataques.';
+    }
+    return '';
+  }
+
+  private attacksForPokemon(pokemon: PokemonInPlayResponse): CardAttack[] {
+    return this.cardsById[pokemon.cardId]?.attacks ?? [];
+  }
+
+  isAttackAttacker(pokemon: PokemonInPlayResponse): boolean {
+    return this.attackAnimation?.attackerInstanceId === pokemon.instanceId;
+  }
+
+  isAttackDefender(pokemon: PokemonInPlayResponse): boolean {
+    return this.attackAnimation?.defenderInstanceId === pokemon.instanceId;
+  }
+
+  private currentAttackAnimationState(): AttackAnimationState | null {
+    const attacker = this.currentPlayer?.activePokemon;
+    const defender = this.opponentPlayer?.activePokemon;
+    if (!attacker || !defender) {
+      return null;
+    }
+    return {
+      attackerInstanceId: attacker.instanceId,
+      defenderInstanceId: defender.instanceId
+    };
+  }
+
+  private playAttackAnimation(animation: AttackAnimationState, game: GameResponse): void {
+    this.attackAnimation = animation;
+    window.setTimeout(() => {
+      this.attackAnimation = null;
+      this.attackInFlight = false;
+      this.message = this.mutationMessage(game, 'Ataque realizado.');
+      this.setSelectedGame(game);
+      this.refreshAfterGameUpdate();
+    }, this.attackAnimationMs);
   }
 
   trackByDeckId(_index: number, deck: DeckResponse): number {
@@ -1635,6 +2080,10 @@ export class GamesPageComponent implements OnInit {
     return this.preferredCardImage(this.cardsById[cardId]);
   }
 
+  cardLargeImageUrl(cardId: string): string {
+    return this.preferredCardImage(this.cardsById[cardId], true);
+  }
+
   attachedEnergyCount(player: GamePlayerResponse, pokemonCardId: string, pokemon?: PokemonInPlayResponse): number {
     if (pokemon) {
       return pokemon.attachedEnergyCount;
@@ -1677,9 +2126,22 @@ export class GamesPageComponent implements OnInit {
 
   private preferredCardImage(card?: Card, preferLarge = false): string {
     if (preferLarge) {
-      return card?.imageLargeUrl ?? card?.images?.large ?? card?.imageSmallUrl ?? card?.imageSmall ?? card?.imageUrl ?? card?.images?.small ?? '';
+      return card?.images?.large ?? card?.imageLarge ?? card?.imageLargeUrl ?? card?.images?.small ?? card?.imageSmall ?? card?.imageSmallUrl ?? card?.imageUrl ?? '';
     }
-    return card?.imageSmallUrl ?? card?.imageSmall ?? card?.imageUrl ?? card?.images?.small ?? card?.imageLargeUrl ?? card?.images?.large ?? '';
+    return card?.images?.small ?? card?.imageSmall ?? card?.imageSmallUrl ?? card?.imageUrl ?? card?.images?.large ?? card?.imageLarge ?? card?.imageLargeUrl ?? '';
+  }
+
+  private hasCardSubtype(card: Card, subtype: string): boolean {
+    const normalizedSubtype = this.normalizeCardText(subtype);
+    return (card.subtypes ?? []).some((value) => this.normalizeCardText(value) === normalizedSubtype);
+  }
+
+  private cardNamesMatch(firstName?: string, secondName?: string): boolean {
+    return this.normalizeCardText(firstName) === this.normalizeCardText(secondName);
+  }
+
+  private normalizeCardText(value?: string): string {
+    return value?.trim().toUpperCase() ?? '';
   }
 
   formatModifierList(value: unknown): string {
@@ -1698,23 +2160,35 @@ export class GamesPageComponent implements OnInit {
   }
 
   onHandCardDragStart(event: DragEvent, cardId: string): void {
-    if (!this.isBasicPokemon(cardId)) {
+    if (!this.isDraggableHandCard(cardId)) {
       event.preventDefault();
       return;
     }
     this.draggedHandCardId = cardId;
+    this.draggedEnergyCardId = this.isBasicEnergy(cardId) ? cardId : '';
+    this.draggedEvolutionCardId = this.isEvolutionPokemon(cardId) ? cardId : '';
     this.draggedBenchPokemonInstanceId = '';
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+    }
     event.dataTransfer?.setData('text/plain', cardId);
   }
 
   onBenchPokemonDragStart(event: DragEvent, pokemon: PokemonInPlayResponse): void {
     this.draggedBenchPokemonInstanceId = pokemon.instanceId;
     this.draggedHandCardId = '';
+    this.draggedEnergyCardId = '';
+    this.draggedEvolutionCardId = '';
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+    }
     event.dataTransfer?.setData('text/plain', pokemon.instanceId);
   }
 
   clearDragState(): void {
     this.draggedHandCardId = '';
+    this.draggedEnergyCardId = '';
+    this.draggedEvolutionCardId = '';
     this.draggedBenchPokemonInstanceId = '';
   }
 
@@ -1728,6 +2202,26 @@ export class GamesPageComponent implements OnInit {
     if (this.canDropToBench()) {
       event.preventDefault();
     }
+  }
+
+  onPokemonDragOver(event: DragEvent, pokemon: PokemonInPlayResponse): void {
+    if (this.canAttachEnergyTo(pokemon) || this.canDropEvolutionOn(pokemon)) {
+      event.preventDefault();
+    }
+  }
+
+  onPokemonDrop(event: DragEvent, pokemon: PokemonInPlayResponse): void {
+    if (!this.canAttachEnergyTo(pokemon) && !this.canDropEvolutionOn(pokemon)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (this.canAttachEnergyTo(pokemon)) {
+      this.attachEnergyToPokemon(this.draggedEnergyCardId, pokemon.instanceId);
+    } else if (this.canDropEvolutionOn(pokemon)) {
+      this.evolvePokemonTo(this.draggedEvolutionCardId, pokemon);
+    }
+    this.clearDragState();
   }
 
   onActiveDrop(event: DragEvent): void {
@@ -1769,6 +2263,36 @@ export class GamesPageComponent implements OnInit {
     );
   }
 
+  private attachEnergyToPokemon(energyCardId: string, pokemonInstanceId: string): void {
+    if (!this.selectedGame || !this.currentPlayer || !energyCardId || !pokemonInstanceId) {
+      return;
+    }
+    this.runGameMutation(
+      this.gamesService.attachEnergy(this.selectedGame.id, {
+        playerId: this.currentPlayer.id,
+        energyCardId,
+        pokemonInstanceId
+      }),
+      'Energia unida.'
+    );
+  }
+
+  private evolvePokemonTo(evolutionCardId: string, targetPokemon: PokemonInPlayResponse): void {
+    if (!this.selectedGame || !this.currentPlayer || !evolutionCardId || !targetPokemon.instanceId) {
+      return;
+    }
+    const fromName = this.cardName(targetPokemon.cardId);
+    const toName = this.cardName(evolutionCardId);
+    this.runGameMutation(
+      this.gamesService.evolvePokemon(this.selectedGame.id, {
+        playerId: this.currentPlayer.id,
+        evolutionCardId,
+        targetPokemonInstanceId: targetPokemon.instanceId
+      }),
+      `${fromName} evolucionó a ${toName}.`
+    );
+  }
+
   handTransform(index: number, total: number): string {
     const center = (total - 1) / 2;
     const offset = index - center;
@@ -1787,6 +2311,91 @@ export class GamesPageComponent implements OnInit {
     return card?.supertype === 'Energy' && (card.subtypes ?? []).includes('Basic');
   }
 
+  isEvolutionPokemon(cardId: string): boolean {
+    const card = this.cardsById[cardId];
+    return card?.supertype === 'Pokémon'
+      && !!card.evolvesFrom
+      && (this.hasCardSubtype(card, 'Stage 1') || this.hasCardSubtype(card, 'Stage 2') || this.hasCardSubtype(card, 'MEGA'));
+  }
+
+  isDraggableHandCard(cardId: string): boolean {
+    return this.isBasicPokemon(cardId) || this.isBasicEnergy(cardId) || this.isEvolutionPokemon(cardId);
+  }
+
+  private maybeAutoDraw(game: GameResponse): void {
+    if (game.status !== 'ACTIVE' || game.turnPhase !== 'DRAW' || !game.currentPlayerId) {
+      return;
+    }
+    if (this.drawAnimation) {
+      return;
+    }
+
+    const autoDrawKey = this.autoDrawKey(game);
+    if (this.lastAutoDrawKey === autoDrawKey || this.autoDrawInFlightKey === autoDrawKey) {
+      return;
+    }
+
+    this.lastAutoDrawKey = autoDrawKey;
+    this.autoDrawInFlightKey = autoDrawKey;
+    this.gamesService.drawCard(game.id, { playerId: game.currentPlayerId }).subscribe({
+      next: (drawnGame) => {
+        if (drawnGame.status === 'FINISHED') {
+          if (this.autoDrawInFlightKey === autoDrawKey) {
+            this.autoDrawInFlightKey = '';
+          }
+          this.message = this.mutationMessage(drawnGame, 'Carta robada automáticamente.');
+          this.setSelectedGame(drawnGame);
+          this.loadGames();
+          return;
+        }
+        this.playDrawAnimation(autoDrawKey, drawnGame);
+      },
+      error: (error) => {
+        if (this.autoDrawInFlightKey === autoDrawKey) {
+          this.autoDrawInFlightKey = '';
+        }
+        this.error = this.backendError(error, 'No se pudo robar carta automáticamente.');
+      }
+    });
+  }
+
+  private autoDrawKey(game: GameResponse): string {
+    const latestLog = game.logs[game.logs.length - 1];
+    return [
+      game.id,
+      game.currentPlayerId ?? '-',
+      game.turnPhase ?? '-',
+      game.updatedAt ?? '-',
+      latestLog?.id ?? game.logs.length
+    ].join('-');
+  }
+
+  private playDrawAnimation(autoDrawKey: string, game: GameResponse): void {
+    this.drawAnimation = { key: autoDrawKey };
+    window.setTimeout(() => {
+      this.drawAnimation = null;
+      if (this.autoDrawInFlightKey === autoDrawKey) {
+        this.autoDrawInFlightKey = '';
+      }
+      this.message = this.mutationMessage(game, 'Carta robada automáticamente.');
+      this.setSelectedGame(game);
+      this.loadGames();
+    }, this.drawAnimationMs);
+  }
+
+  private syncAttackOverlay(game: GameResponse): void {
+    if (!this.selectedAttackPokemon) {
+      return;
+    }
+    const currentPlayer = game.players.find((player) => player.id === game.currentPlayerId);
+    const activePokemon = currentPlayer?.activePokemon;
+    if (game.status !== 'ACTIVE' || game.turnPhase !== 'MAIN' || activePokemon?.instanceId !== this.selectedAttackPokemon.instanceId) {
+      this.closeAttackOverlay();
+      return;
+    }
+    this.selectedAttackPokemon = activePokemon;
+  }
+
   private runGameMutation(
     request: Observable<GameResponse>,
     successMessage: string,
@@ -1798,13 +2407,23 @@ export class GamesPageComponent implements OnInit {
       next: (game) => {
         this.message = this.mutationMessage(game, successMessage);
         this.setSelectedGame(game);
-        this.refreshSelectedGame();
-        this.loadGames();
+        this.refreshAfterGameUpdate();
       },
       error: (error) => {
         this.error = this.backendError(error, errorMessage);
       }
     });
+  }
+
+  private refreshAfterGameUpdate(): void {
+    if (!this.hasPendingVisualAnimation()) {
+      this.refreshSelectedGame();
+    }
+    this.loadGames();
+  }
+
+  private hasPendingVisualAnimation(): boolean {
+    return !!this.attackAnimation || !!this.drawAnimation || !!this.autoDrawInFlightKey;
   }
 
   private refreshSelectedGame(): void {
@@ -1824,6 +2443,8 @@ export class GamesPageComponent implements OnInit {
     this.selectedTargetPokemonInstanceId = '';
     this.selectedPromotionPokemonInstanceId = '';
     this.selectedAttackName = '';
+    this.syncAttackOverlay(game);
+    this.maybeAutoDraw(game);
   }
 
   private mutationMessage(game: GameResponse, successMessage: string): string {
