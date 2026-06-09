@@ -8,6 +8,7 @@ import com.pokemontcg.game.dto.GameActionRequest;
 import com.pokemontcg.game.dto.GameResponse;
 import com.pokemontcg.game.dto.JoinGameRequest;
 import com.pokemontcg.game.dto.PlayBasicPokemonRequest;
+import com.pokemontcg.game.dto.PlayTrainerRequest;
 import com.pokemontcg.game.dto.PromoteActiveRequest;
 import com.pokemontcg.game.service.GameService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -70,6 +71,12 @@ public class GameController {
     @Operation(summary = "Juega un Pokemon Basico desde la mano al activo o la banca")
     public GameResponse playBasicPokemon(@PathVariable Long id, @Valid @RequestBody PlayBasicPokemonRequest request) {
         return gameService.playBasicPokemon(id, request);
+    }
+
+    @PostMapping("/{id}/actions/play-trainer")
+    @Operation(summary = "Juega una carta Trainer desde la mano")
+    public GameResponse playTrainer(@PathVariable Long id, @Valid @RequestBody PlayTrainerRequest request) {
+        return gameService.playTrainer(id, request);
     }
 
     @PostMapping("/{id}/actions/attach-energy")

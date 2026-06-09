@@ -15,6 +15,7 @@ import com.pokemontcg.game.dto.GameActionRequest;
 import com.pokemontcg.game.dto.GameResponse;
 import com.pokemontcg.game.dto.JoinGameRequest;
 import com.pokemontcg.game.dto.PlayBasicPokemonRequest;
+import com.pokemontcg.game.dto.PlayTrainerRequest;
 import com.pokemontcg.game.persistence.GameEntity;
 import com.pokemontcg.game.persistence.GameLogEntity;
 import com.pokemontcg.game.persistence.GamePlayerEntity;
@@ -565,6 +566,105 @@ class GameServiceTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
                 .isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void playTrainerFailsWhenGameDoesNotExist() {
+        when(gameRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> gameService.playTrainer(99L, new PlayTrainerRequest(100L, "trainer-1", null, null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void playTrainerFailsWhenGameIsNotActive() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand();
+        game.setStatus(GameStatus.WAITING);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+
+        assertThatThrownBy(() -> gameService.playTrainer(1L, new PlayTrainerRequest(100L, "trainer-1", null, null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void playTrainerFailsWhenPlayerIsNotCurrentPlayer() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand();
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+
+        assertThatThrownBy(() -> gameService.playTrainer(1L, new PlayTrainerRequest(200L, "trainer-1", null, null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void playTrainerFailsWhenPhaseIsNotMain() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand();
+        game.setTurnPhase(TurnPhase.DRAW);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+
+        assertThatThrownBy(() -> gameService.playTrainer(1L, new PlayTrainerRequest(100L, "trainer-1", null, null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void playTrainerFailsWhenCardIsNotInHand() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand();
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+
+        assertThatThrownBy(() -> gameService.playTrainer(1L, new PlayTrainerRequest(100L, "trainer-99", null, null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void playTrainerFailsWhenCardDoesNotExist() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand();
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("trainer-1")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> gameService.playTrainer(1L, new PlayTrainerRequest(100L, "trainer-1", null, null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void playTrainerFailsWhenCardIsNotTrainer() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand();
+        CardEntity pokemon = card("trainer-1", "Pikachu", "Pokémon", List.of("Basic"));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("trainer-1")).thenReturn(Optional.of(pokemon));
+
+        assertThatThrownBy(() -> gameService.playTrainer(1L, new PlayTrainerRequest(100L, "trainer-1", null, null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("La carta seleccionada no es una carta Trainer.")
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void playTrainerRejectsUnimplementedTrainerWithoutMutatingState() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand();
+        CardEntity trainer = card("trainer-1", "Potion", "Trainer", List.of("Item"));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("trainer-1")).thenReturn(Optional.of(trainer));
+
+        assertThatThrownBy(() -> gameService.playTrainer(1L, new PlayTrainerRequest(100L, "trainer-1", "active-copy", 200L)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("El efecto de esta carta Trainer todavía no está implementado.")
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.NOT_IMPLEMENTED);
+        assertThat(game.getPlayers().getFirst().getHandCardIds()).contains("trainer-1");
+        assertThat(game.getPlayers().getFirst().getDiscardCardIds()).isEmpty();
+        assertThat(game.getLogs()).extracting(GameLogEntity::getActionType).doesNotContain("PLAY_TRAINER");
     }
 
     @Test
@@ -1867,6 +1967,13 @@ class GameServiceTest {
         assertFinishedAction(() -> gameService.promoteActive(1L, new PromoteActiveRequest(100L, "bench-copy")));
     }
 
+    @Test
+    void playTrainerFailsWhenGameIsFinished() {
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(finishedGame()));
+
+        assertFinishedAction(() -> gameService.playTrainer(1L, new PlayTrainerRequest(100L, "trainer-1", null, null)));
+    }
+
     private DeckEntity deck(Long id, String name) {
         DeckEntity deck = new DeckEntity();
         deck.setId(id);
@@ -2038,6 +2145,13 @@ class GameServiceTest {
         GameEntity game = activeGame();
         game.setTurnPhase(TurnPhase.MAIN);
         game.getPlayers().getFirst().getHandCardIds().add("xy1-1");
+        return game;
+    }
+
+    private GameEntity activeGameInMainPhaseWithTrainerInHand() {
+        GameEntity game = activeGame();
+        game.setTurnPhase(TurnPhase.MAIN);
+        game.getPlayers().getFirst().getHandCardIds().add("trainer-1");
         return game;
     }
 

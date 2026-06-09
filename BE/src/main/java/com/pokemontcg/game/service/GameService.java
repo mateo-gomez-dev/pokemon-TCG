@@ -17,6 +17,7 @@ import com.pokemontcg.game.dto.GameResponse;
 import com.pokemontcg.game.dto.JoinGameRequest;
 import com.pokemontcg.game.dto.PokemonInPlayResponse;
 import com.pokemontcg.game.dto.PlayBasicPokemonRequest;
+import com.pokemontcg.game.dto.PlayTrainerRequest;
 import com.pokemontcg.game.dto.PromoteActiveRequest;
 import com.pokemontcg.game.persistence.GameEntity;
 import com.pokemontcg.game.persistence.GameLogEntity;
@@ -67,6 +68,7 @@ public class GameService {
     private static final int PRIZE_CARDS_START_INDEX = INITIAL_HAND_SIZE;
     private static final int REMAINING_DECK_START_INDEX = INITIAL_HAND_SIZE + PRIZE_CARD_COUNT;
     private static final String COLORLESS_ENERGY_TYPE = "Colorless";
+    private static final String TRAINER_SUPERTYPE = "Trainer";
     private static final Set<String> EVOLUTION_SUBTYPES = Set.of("STAGE 1", "STAGE 2", "MEGA");
     private static final Set<String> SUPPORTED_ENERGY_TYPES = Set.of(
             "Grass", "Fire", "Water", "Lightning", "Psychic", "Fighting", "Darkness", "Metal", "Fairy", "Dragon", COLORLESS_ENERGY_TYPE
@@ -229,6 +231,20 @@ public class GameService {
         syncDerivedPokemonFields(player);
 
         return toResponse(gameRepository.save(game));
+    }
+
+    @Transactional
+    public GameResponse playTrainer(Long gameId, PlayTrainerRequest request) {
+        GameEntity game = findActiveGameForCurrentPlayer(gameId, request.playerId());
+        assertMainPhase(game);
+
+        GamePlayerEntity player = findPlayer(game, request.playerId());
+        assertCardInList(player.getHandCardIds(), request.trainerCardId(), "La carta no esta en la mano del jugador");
+
+        CardEntity card = findCardOrBadRequest(request.trainerCardId(), "Carta no encontrada");
+        assertTrainerCard(card);
+
+        throw new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED, "El efecto de esta carta Trainer todavía no está implementado.");
     }
 
     @Transactional
@@ -464,6 +480,12 @@ public class GameService {
         }
         if (!hasSubtype(card, BASIC_SUBTYPE)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La carta no es un Pokemon Basico");
+        }
+    }
+
+    private void assertTrainerCard(CardEntity card) {
+        if (!TRAINER_SUPERTYPE.equalsIgnoreCase(card.getSupertype())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La carta seleccionada no es una carta Trainer.");
         }
     }
 
