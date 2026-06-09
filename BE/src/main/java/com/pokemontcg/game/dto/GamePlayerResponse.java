@@ -15,6 +15,7 @@ public record GamePlayerResponse(
         int benchSize,
         int discardSize,
         boolean energyAttachedThisTurn,
+        boolean supporterPlayedThisTurn,
         String activePokemonInstanceId,
         String activePokemonCardId,
         PokemonInPlayResponse activePokemon,

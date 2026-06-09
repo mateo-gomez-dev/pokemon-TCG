@@ -34,12 +34,21 @@ export interface AttackRequest extends GameActionRequest {
   attackIndex?: number;
 }
 
+export interface PlayTrainerRequest extends GameActionRequest {
+  trainerCardId: string;
+  targetPokemonInstanceId?: string;
+  targetPlayerId?: number;
+}
+
 export interface GameResponse {
   id: number;
   status: 'WAITING' | 'SETUP' | 'ACTIVE' | 'FINISHED' | string;
   turnPhase: 'DRAW' | 'MAIN' | string;
   currentPlayerId?: number;
   winnerPlayerId?: number;
+  activeStadiumCardId?: string | null;
+  activeStadiumName?: string | null;
+  activeStadium?: { id?: string; name?: string } | null;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
@@ -60,6 +69,7 @@ export interface GamePlayerResponse {
   benchSize: number;
   discardSize: number;
   energyAttachedThisTurn: boolean;
+  supporterPlayedThisTurn?: boolean | null;
   activePokemonInstanceId?: string;
   activePokemonCardId?: string;
   activePokemon?: PokemonInPlayResponse;

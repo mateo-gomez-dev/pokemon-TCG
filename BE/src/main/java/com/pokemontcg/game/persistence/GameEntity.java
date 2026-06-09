@@ -34,6 +34,7 @@ public class GameEntity {
 
     private Long currentPlayerId;
     private Long winnerPlayerId;
+    private String activeStadiumCardId;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -98,6 +99,14 @@ public class GameEntity {
 
     public void setWinnerPlayerId(Long winnerPlayerId) {
         this.winnerPlayerId = winnerPlayerId;
+    }
+
+    public String getActiveStadiumCardId() {
+        return activeStadiumCardId;
+    }
+
+    public void setActiveStadiumCardId(String activeStadiumCardId) {
+        this.activeStadiumCardId = activeStadiumCardId;
     }
 
     public LocalDateTime getCreatedAt() {

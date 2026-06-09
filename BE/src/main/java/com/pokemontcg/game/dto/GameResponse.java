@@ -12,6 +12,7 @@ public record GameResponse(
         TurnPhase turnPhase,
         Long currentPlayerId,
         Long winnerPlayerId,
+        String activeStadiumCardId,
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
         LocalDateTime startedAt,

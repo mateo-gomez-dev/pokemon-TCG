@@ -114,6 +114,32 @@ class GameServiceTest {
         assertThat(response).hasSize(1);
         assertThat(response.getFirst().id()).isEqualTo(1L);
         assertThat(response.getFirst().status()).isEqualTo(GameStatus.WAITING);
+        assertThat(response.getFirst().activeStadiumCardId()).isNull();
+    }
+
+    @Test
+    void getGamesDoesNotFailWithoutStadiumAndNullSupporterFlag() {
+        GameEntity game = activeGame();
+        game.getPlayers().getFirst().setSupporterPlayedThisTurn(null);
+        when(gameRepository.findAll()).thenReturn(List.of(game));
+
+        List<GameResponse> response = gameService.getGames();
+
+        assertThat(response).hasSize(1);
+        assertThat(response.getFirst().activeStadiumCardId()).isNull();
+        assertThat(response.getFirst().players().getFirst().supporterPlayedThisTurn()).isFalse();
+    }
+
+    @Test
+    void getGamesDoesNotFailWithActiveStadium() {
+        GameEntity game = activeGame();
+        game.setActiveStadiumCardId("shadow-circle");
+        when(gameRepository.findAll()).thenReturn(List.of(game));
+
+        List<GameResponse> response = gameService.getGames();
+
+        assertThat(response).hasSize(1);
+        assertThat(response.getFirst().activeStadiumCardId()).isEqualTo("shadow-circle");
     }
 
     @Test
@@ -665,6 +691,276 @@ class GameServiceTest {
         assertThat(game.getPlayers().getFirst().getHandCardIds()).contains("trainer-1");
         assertThat(game.getPlayers().getFirst().getDiscardCardIds()).isEmpty();
         assertThat(game.getLogs()).extracting(GameLogEntity::getActionType).doesNotContain("PLAY_TRAINER");
+    }
+
+    @Test
+    void playTrainerProfessorsLetterAddsUpToTwoBasicEnergies() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand("professors-letter");
+        GamePlayerEntity player = game.getPlayers().getFirst();
+        player.setDeckCardIds(new java.util.ArrayList<>(List.of("fire-1", "dce-1", "water-1", "rainbow-1", "pokemon-1")));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("professors-letter")).thenReturn(Optional.of(trainer("professors-letter", "Professor's Letter", "Item")));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(
+                energy("fire-1", "Fire Energy", "Fire"),
+                specialEnergy("dce-1", "Double Colorless Energy"),
+                energy("water-1", "Water Energy", "Water"),
+                specialEnergy("rainbow-1", "Rainbow Energy"),
+                basicPokemon("pokemon-1", "Fennekin", "Fire")
+        ));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.playTrainer(1L, new PlayTrainerRequest(100L, "professors-letter", null, null));
+
+        assertThat(response.players().getFirst().handCardIds()).contains("fire-1", "water-1");
+        assertThat(response.players().getFirst().handCardIds()).doesNotContain("professors-letter", "dce-1", "rainbow-1");
+        assertThat(response.players().getFirst().deckCardIds()).containsExactly("dce-1", "rainbow-1", "pokemon-1");
+        assertThat(response.players().getFirst().discardCardIds()).containsExactly("professors-letter");
+        assertThat(response.logs().getLast().message()).isEqualTo("Ash usó Professor's Letter y agregó 2 energías básicas a su mano.");
+    }
+
+    @Test
+    void playTrainerProfessorsLetterDoesNotAddDoubleColorlessOrRainbowEnergy() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand("professors-letter");
+        game.getPlayers().getFirst().setDeckCardIds(new java.util.ArrayList<>(List.of("dce-1", "rainbow-1")));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("professors-letter")).thenReturn(Optional.of(trainer("professors-letter", "Professor's Letter", "Item")));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(
+                specialEnergy("dce-1", "Double Colorless Energy"),
+                specialEnergy("rainbow-1", "Rainbow Energy")
+        ));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.playTrainer(1L, new PlayTrainerRequest(100L, "professors-letter", null, null));
+
+        assertThat(response.players().getFirst().handCardIds()).doesNotContain("dce-1", "rainbow-1", "professors-letter");
+        assertThat(response.players().getFirst().deckCardIds()).containsExactly("dce-1", "rainbow-1");
+        assertThat(response.players().getFirst().discardCardIds()).containsExactly("professors-letter");
+        assertThat(response.logs().getLast().message()).isEqualTo("Ash usó Professor's Letter y no encontró energías básicas.");
+    }
+
+    @Test
+    void playTrainerGreatBallAddsFirstPokemonFromTopSevenCards() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand("great-ball");
+        game.getPlayers().getFirst().setDeckCardIds(new java.util.ArrayList<>(List.of("energy-1", "energy-2", "fennekin", "energy-3", "pikachu", "energy-4", "energy-5", "pokemon-8")));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("great-ball")).thenReturn(Optional.of(trainer("great-ball", "Great Ball", "Item")));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(
+                energy("energy-1", "Fire Energy", "Fire"),
+                energy("energy-2", "Water Energy", "Water"),
+                basicPokemon("fennekin", "Fennekin", "Fire"),
+                energy("energy-3", "Grass Energy", "Grass"),
+                basicPokemon("pikachu", "Pikachu", "Lightning"),
+                energy("energy-4", "Lightning Energy", "Lightning"),
+                energy("energy-5", "Darkness Energy", "Darkness")
+        ));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.playTrainer(1L, new PlayTrainerRequest(100L, "great-ball", null, null));
+
+        assertThat(response.players().getFirst().handCardIds()).contains("fennekin");
+        assertThat(response.players().getFirst().deckCardIds()).containsExactly("energy-1", "energy-2", "energy-3", "pikachu", "energy-4", "energy-5", "pokemon-8");
+        assertThat(response.players().getFirst().discardCardIds()).containsExactly("great-ball");
+        assertThat(response.logs().getLast().message()).isEqualTo("Ash usó Great Ball y agregó Fennekin a su mano.");
+    }
+
+    @Test
+    void playTrainerGreatBallAddsNothingWhenTopSevenCardsHaveNoPokemon() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand("great-ball");
+        List<String> originalDeck = List.of("energy-1", "energy-2", "energy-3", "energy-4", "energy-5", "energy-6", "energy-7", "pokemon-8");
+        game.getPlayers().getFirst().setDeckCardIds(new java.util.ArrayList<>(originalDeck));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("great-ball")).thenReturn(Optional.of(trainer("great-ball", "Great Ball", "Item")));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(
+                energy("energy-1", "Fire Energy", "Fire"),
+                energy("energy-2", "Water Energy", "Water"),
+                energy("energy-3", "Grass Energy", "Grass"),
+                energy("energy-4", "Lightning Energy", "Lightning"),
+                energy("energy-5", "Darkness Energy", "Darkness"),
+                energy("energy-6", "Metal Energy", "Metal"),
+                energy("energy-7", "Fairy Energy", "Fairy")
+        ));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.playTrainer(1L, new PlayTrainerRequest(100L, "great-ball", null, null));
+
+        assertThat(response.players().getFirst().handCardIds()).doesNotContain("great-ball", "pokemon-8");
+        assertThat(response.players().getFirst().deckCardIds()).containsExactlyElementsOf(originalDeck);
+        assertThat(response.players().getFirst().discardCardIds()).containsExactly("great-ball");
+        assertThat(response.logs().getLast().message()).isEqualTo("Ash usó Great Ball y no encontró Pokémon.");
+    }
+
+    @Test
+    void playTrainerSuperPotionHealsOwnDamagedPokemon() {
+        GameEntity game = activeGameWithDamagedPokemonAndTrainer("super-potion", 80);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("super-potion")).thenReturn(Optional.of(trainer("super-potion", "Super Potion", "Item")));
+        when(cardRepository.findById("xy1-1")).thenReturn(Optional.of(basicPokemon("xy1-1", "Fennekin", "Fire")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.playTrainer(1L, new PlayTrainerRequest(100L, "super-potion", "active-copy", null));
+
+        assertThat(response.players().getFirst().activePokemon().damage()).isEqualTo(20);
+        assertThat(response.players().getFirst().discardCardIds()).containsExactly("super-potion");
+        assertThat(response.players().getFirst().handCardIds()).doesNotContain("super-potion");
+        assertThat(response.logs().getLast().message()).isEqualTo("Ash usó Super Potion y curó 60 de daño de Fennekin.");
+    }
+
+    @Test
+    void playTrainerSuperPotionFailsWhenPokemonHasNoDamage() {
+        GameEntity game = activeGameWithDamagedPokemonAndTrainer("super-potion", 0);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("super-potion")).thenReturn(Optional.of(trainer("super-potion", "Super Potion", "Item")));
+
+        assertThatThrownBy(() -> gameService.playTrainer(1L, new PlayTrainerRequest(100L, "super-potion", "active-copy", null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Ese Pokémon no tiene daño para curar.")
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+        assertThat(game.getPlayers().getFirst().getHandCardIds()).contains("super-potion");
+        assertThat(game.getPlayers().getFirst().getDiscardCardIds()).isEmpty();
+    }
+
+    @Test
+    void playTrainerSuperPotionFailsWhenTargetPokemonBelongsToOpponent() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand("super-potion");
+        game.getPlayers().get(1).getPokemonInPlay().add(pokemonInPlay("opponent-active", "xy1-2", PokemonZone.ACTIVE));
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("super-potion")).thenReturn(Optional.of(trainer("super-potion", "Super Potion", "Item")));
+
+        assertThatThrownBy(() -> gameService.playTrainer(1L, new PlayTrainerRequest(100L, "super-potion", "opponent-active", null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("No puedes curar un Pokémon rival.")
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+        assertThat(game.getPlayers().getFirst().getHandCardIds()).contains("super-potion");
+        assertThat(game.getPlayers().getFirst().getDiscardCardIds()).isEmpty();
+    }
+
+    @Test
+    void playTrainerShaunaDrawsFiveAndMarksSupporterPlayed() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand("shauna");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("shauna")).thenReturn(Optional.of(trainer("shauna", "Shauna", "Supporter")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.playTrainer(1L, new PlayTrainerRequest(100L, "shauna", null, null));
+
+        assertThat(response.players().getFirst().handSize()).isEqualTo(5);
+        assertThat(response.players().getFirst().deckRemaining()).isEqualTo(49);
+        assertThat(response.players().getFirst().supporterPlayedThisTurn()).isTrue();
+        assertThat(response.players().getFirst().discardCardIds()).containsExactly("shauna");
+        assertThat(response.logs().getLast().message()).isEqualTo("Ash usó Shauna y robó 5 cartas.");
+    }
+
+    @Test
+    void playTrainerProfessorSycamoreDiscardsHandDrawsSevenAndMarksSupporterPlayed() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand("professor-sycamore");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("professor-sycamore")).thenReturn(Optional.of(trainer("professor-sycamore", "Professor Sycamore", "Supporter")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.playTrainer(1L, new PlayTrainerRequest(100L, "professor-sycamore", null, null));
+
+        assertThat(response.players().getFirst().handCardIds()).containsExactly("d1", "d2", "d3", "d4", "d5", "d6", "d7");
+        assertThat(response.players().getFirst().deckRemaining()).isEqualTo(40);
+        assertThat(response.players().getFirst().supporterPlayedThisTurn()).isTrue();
+        assertThat(response.players().getFirst().discardCardIds()).contains("professor-sycamore", "h1", "h2", "h3", "h4", "h5", "h6", "h7");
+        assertThat(response.logs().getLast().message()).isEqualTo("Ash usó Professor Sycamore, descartó su mano y robó 7 cartas.");
+    }
+
+    @Test
+    void playTrainerFailsWhenSupporterWasAlreadyPlayedThisTurn() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand("shauna");
+        game.getPlayers().getFirst().setSupporterPlayedThisTurn(true);
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("shauna")).thenReturn(Optional.of(trainer("shauna", "Shauna", "Supporter")));
+
+        assertThatThrownBy(() -> gameService.playTrainer(1L, new PlayTrainerRequest(100L, "shauna", null, null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Ya jugaste un Supporter este turno.")
+                .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+        assertThat(game.getPlayers().getFirst().getHandCardIds()).contains("shauna");
+        assertThat(game.getPlayers().getFirst().getDiscardCardIds()).isEmpty();
+    }
+
+    @Test
+    void endTurnResetsSupporterForPlayerReceivingTurnSoTheyCanPlaySupporter() {
+        GameEntity game = activeGame();
+        game.setTurnPhase(TurnPhase.MAIN);
+        game.getPlayers().get(1).setSupporterPlayedThisTurn(true);
+        game.getPlayers().get(1).getHandCardIds().add("shauna");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("shauna")).thenReturn(Optional.of(trainer("shauna", "Shauna", "Supporter")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse endTurnResponse = gameService.endTurn(1L, new GameActionRequest(100L));
+        game.setTurnPhase(TurnPhase.MAIN);
+        GameResponse playSupporterResponse = gameService.playTrainer(1L, new PlayTrainerRequest(200L, "shauna", null, null));
+
+        assertThat(endTurnResponse.currentPlayerId()).isEqualTo(200L);
+        assertThat(endTurnResponse.players().get(1).supporterPlayedThisTurn()).isFalse();
+        assertThat(playSupporterResponse.players().get(1).supporterPlayedThisTurn()).isTrue();
+    }
+
+    @Test
+    void playTrainerFairyGardenSetsActiveStadium() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand("fairy-garden");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("fairy-garden")).thenReturn(Optional.of(trainer("fairy-garden", "Fairy Garden", "Stadium")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.playTrainer(1L, new PlayTrainerRequest(100L, "fairy-garden", null, null));
+
+        assertThat(response.activeStadiumCardId()).isEqualTo("fairy-garden");
+        assertThat(response.players().getFirst().discardCardIds()).containsExactly("fairy-garden");
+        assertThat(response.logs().getLast().message()).isEqualTo("Ash jugó el estadio Fairy Garden.");
+    }
+
+    @Test
+    void playTrainerShadowCircleSetsActiveStadium() {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand("shadow-circle");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("shadow-circle")).thenReturn(Optional.of(trainer("shadow-circle", "Shadow Circle", "Stadium")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.playTrainer(1L, new PlayTrainerRequest(100L, "shadow-circle", null, null));
+
+        assertThat(response.activeStadiumCardId()).isEqualTo("shadow-circle");
+        assertThat(response.players().getFirst().discardCardIds()).containsExactly("shadow-circle");
+        assertThat(response.logs().getLast().message()).isEqualTo("Ash jugó el estadio Shadow Circle.");
+    }
+
+    @Test
+    void attackWithShadowCircleActiveDoesNotApplyWeaknessWhenDefenderHasDarknessEnergy() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        game.setActiveStadiumCardId("shadow-circle");
+        game.getPlayers().get(1).getPokemonInPlay().getFirst().getAttachedEnergyCardIds().add("darkness-1");
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), "20");
+        CardEntity defender = withWeakness(typedPokemonWithAttack("xy1-2", "Bulbasaur", 70, "Grass", "Growl", List.of(), "0"), "Lightning", "×2");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findById("shadow-circle")).thenReturn(Optional.of(trainer("shadow-circle", "Shadow Circle", "Stadium")));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, energy("darkness-1", "Darkness Energy", "Darkness")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(20);
+    }
+
+    @Test
+    void attackWithoutActiveStadiumDoesNotBreakAndStillAppliesWeakness() {
+        GameEntity game = activeGameReadyForAttackWithAttachedEnergies(List.of());
+        game.getPlayers().get(1).getPokemonInPlay().getFirst().getAttachedEnergyCardIds().add("darkness-1");
+        CardEntity attacker = typedPokemonWithAttack("xy1-1", "Pikachu", 60, "Lightning", "Spark", List.of(), "20");
+        CardEntity defender = withWeakness(typedPokemonWithAttack("xy1-2", "Bulbasaur", 70, "Grass", "Growl", List.of(), "0"), "Lightning", "×2");
+        when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+        when(cardRepository.findAllById(any())).thenReturn(List.of(attacker, defender, energy("darkness-1", "Darkness Energy", "Darkness")));
+        when(gameRepository.save(any(GameEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        GameResponse response = gameService.attack(1L, new AttackRequest(100L, "Spark"));
+
+        assertThat(response.players().get(1).activePokemon().damage()).isEqualTo(40);
     }
 
     @Test
@@ -2004,6 +2300,10 @@ class GameServiceTest {
         return card;
     }
 
+    private CardEntity trainer(String id, String name, String subtype) {
+        return card(id, name, "Trainer", List.of(subtype));
+    }
+
     private CardEntity basicPokemon(String id, String name, String type) {
         CardEntity card = card(id, name, "Pokémon", List.of("Basic"));
         card.setTypes(List.of(type));
@@ -2149,9 +2449,22 @@ class GameServiceTest {
     }
 
     private GameEntity activeGameInMainPhaseWithTrainerInHand() {
+        return activeGameInMainPhaseWithTrainerInHand("trainer-1");
+    }
+
+    private GameEntity activeGameInMainPhaseWithTrainerInHand(String trainerCardId) {
         GameEntity game = activeGame();
         game.setTurnPhase(TurnPhase.MAIN);
-        game.getPlayers().getFirst().getHandCardIds().add("trainer-1");
+        game.getPlayers().getFirst().getHandCardIds().add(trainerCardId);
+        return game;
+    }
+
+    private GameEntity activeGameWithDamagedPokemonAndTrainer(String trainerCardId, int damage) {
+        GameEntity game = activeGameInMainPhaseWithTrainerInHand(trainerCardId);
+        PokemonInPlay activePokemon = pokemonInPlay("active-copy", "xy1-1", PokemonZone.ACTIVE);
+        activePokemon.setDamage(damage);
+        game.getPlayers().getFirst().getPokemonInPlay().add(activePokemon);
+        game.getPlayers().getFirst().setActivePokemonInstanceId("active-copy");
         return game;
     }
 

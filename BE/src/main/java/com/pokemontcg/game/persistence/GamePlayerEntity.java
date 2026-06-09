@@ -75,6 +75,8 @@ public class GamePlayerEntity {
     @Column(nullable = false)
     private boolean energyAttachedThisTurn;
 
+    private Boolean supporterPlayedThisTurn = Boolean.FALSE;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private List<String> discardCardIds = new ArrayList<>();
@@ -197,6 +199,18 @@ public class GamePlayerEntity {
 
     public void setEnergyAttachedThisTurn(boolean energyAttachedThisTurn) {
         this.energyAttachedThisTurn = energyAttachedThisTurn;
+    }
+
+    public Boolean getSupporterPlayedThisTurn() {
+        return supporterPlayedThisTurn;
+    }
+
+    public boolean isSupporterPlayedThisTurn() {
+        return Boolean.TRUE.equals(supporterPlayedThisTurn);
+    }
+
+    public void setSupporterPlayedThisTurn(Boolean supporterPlayedThisTurn) {
+        this.supporterPlayedThisTurn = supporterPlayedThisTurn;
     }
 
     public List<String> getDiscardCardIds() {

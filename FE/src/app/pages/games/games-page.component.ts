@@ -129,6 +129,7 @@ interface DrawAnimationState {
                 <span>{{ selectedGame.status }}</span>
                 <span>Fase {{ selectedGame.turnPhase || '-' }}</span>
                 <span>Turno {{ selectedGame.currentPlayerId || '-' }}</span>
+                <span>{{ activeStadiumText }}</span>
               </div>
               <button type="button" (click)="startGame()" [disabled]="!canStartGame()">
                 Iniciar
@@ -203,6 +204,7 @@ interface DrawAnimationState {
                       [class.attack-lunge]="isAttackAttacker(pokemon)"
                       [class.energy-drop-target]="canAttachEnergyTo(pokemon)"
                       [class.evolution-drop-target]="canEvolvePokemonTo(pokemon)"
+                      [class.trainer-drop-target]="canUseSuperPotionOn(pokemon)"
                       (dragover)="onPokemonDragOver($event, pokemon)"
                       (drop)="onPokemonDrop($event, pokemon)"
                       (click)="onPlayerActivePokemonClick($event, pokemon, player)"
@@ -234,6 +236,7 @@ interface DrawAnimationState {
                     class="tcg-card bench-card"
                     [class.energy-drop-target]="canAttachEnergyTo(pokemon)"
                     [class.evolution-drop-target]="canEvolvePokemonTo(pokemon)"
+                    [class.trainer-drop-target]="canUseSuperPotionOn(pokemon)"
                     [draggable]="player.id === currentPlayer?.id"
                     (dragover)="onPokemonDragOver($event, pokemon)"
                     (drop)="onPokemonDrop($event, pokemon)"
@@ -258,6 +261,7 @@ interface DrawAnimationState {
                 <span>Premios {{ player.prizeCardsRemaining }}</span>
                 <span>Banca {{ player.benchSize }}/5</span>
                 <span>Energia turno {{ player.energyAttachedThisTurn ? 'si' : 'no' }}</span>
+                <span>{{ supporterStatusText(player) }}</span>
               </div>
             </section>
 
@@ -271,9 +275,10 @@ interface DrawAnimationState {
                     class="tcg-card hand-card"
                     *ngFor="let cardId of player.handCardIds; let i = index; trackBy: trackByIndexedCardId"
                     [style.transform]="handTransform(i, player.handCardIds.length)"
-                    [class.selectable]="isBasicPokemon(cardId) || isAttachableEnergy(cardId) || isEvolutionPokemon(cardId)"
+                    [class.selectable]="isBasicPokemon(cardId) || isAttachableEnergy(cardId) || isEvolutionPokemon(cardId) || isTrainerCard(cardId)"
                     [class.energy-card]="isAttachableEnergy(cardId)"
                     [class.evolution-card]="isEvolutionPokemon(cardId)"
+                    [class.trainer-card]="isTrainerCard(cardId)"
                     [draggable]="isDraggableHandCard(cardId)"
                     (dragstart)="onHandCardDragStart($event, cardId)"
                     (dragend)="clearDragState()"
@@ -403,6 +408,23 @@ interface DrawAnimationState {
             </section>
             <p *ngIf="detail.card?.weaknesses">Debilidad: {{ formatModifierList(detail.card?.weaknesses) }}</p>
             <p *ngIf="detail.card?.resistances">Resistencia: {{ formatModifierList(detail.card?.resistances) }}</p>
+            <section class="trainer-actions" *ngIf="canShowTrainerAction(detail)">
+              <h3>Trainer</h3>
+              <button
+                type="button"
+                class="trainer-action-button"
+                [disabled]="!canUseTrainerNow() || isSuperPotion(detail.cardId)"
+                (click)="playTrainerFromModal(detail)"
+              >
+                Usar carta
+              </button>
+              <p class="trainer-hint" *ngIf="isSuperPotion(detail.cardId)">
+                Arrastrá esta carta sobre un Pokémon propio para curarlo.
+              </p>
+              <p class="trainer-hint" *ngIf="!canUseTrainerNow()">
+                Solo podés usar Trainer en tu turno durante la fase MAIN.
+              </p>
+            </section>
           </div>
         </article>
       </section>
@@ -930,6 +952,10 @@ interface DrawAnimationState {
       box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.42), 0 18px 32px rgba(124, 58, 237, 0.26);
     }
 
+    .hand-card.trainer-card {
+      box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.42), 0 18px 32px rgba(22, 163, 74, 0.26);
+    }
+
     .attack-source {
       cursor: pointer;
     }
@@ -957,6 +983,11 @@ interface DrawAnimationState {
     .evolution-drop-target {
       border-color: #a855f7;
       box-shadow: 0 0 0 5px rgba(168, 85, 247, 0.3), 0 0 34px rgba(124, 58, 237, 0.5), 0 18px 35px rgba(15, 23, 42, 0.2);
+    }
+
+    .trainer-drop-target {
+      border-color: #22c55e;
+      box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.3), 0 0 34px rgba(22, 163, 74, 0.5), 0 18px 35px rgba(15, 23, 42, 0.2);
     }
 
     .glow {
@@ -1367,6 +1398,36 @@ interface DrawAnimationState {
       padding-top: 0.55rem;
     }
 
+    .trainer-actions {
+      background: rgba(220, 252, 231, 0.74);
+      border: 1px solid rgba(34, 197, 94, 0.34);
+      border-radius: 18px;
+      padding: 0.75rem;
+    }
+
+    .trainer-action-button {
+      background: linear-gradient(135deg, #22c55e, #0ea5e9);
+      border: 1px solid rgba(255, 255, 255, 0.8);
+      border-radius: 999px;
+      box-shadow: 0 12px 22px rgba(22, 163, 74, 0.22);
+      color: white;
+      font-weight: 900;
+      padding: 0.75rem 1rem;
+      width: fit-content;
+    }
+
+    .trainer-action-button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    .trainer-hint {
+      color: #166534;
+      font-size: 0.9rem;
+      font-weight: 800;
+      margin-bottom: 0;
+    }
+
     .modal-close {
       align-items: center;
       background: #0f172a;
@@ -1575,6 +1636,7 @@ export class GamesPageComponent implements OnInit {
   private readonly attackAnimationMs = 560;
   private readonly drawAnimationMs = 680;
   private readonly supportedEnergyTypes = ['Grass', 'Fire', 'Water', 'Lightning', 'Psychic', 'Fighting', 'Darkness', 'Metal', 'Fairy', 'Dragon', 'Colorless'];
+  private readonly superPotionName = 'Super Potion';
   @ViewChild('handScrollWrapper') private handScrollWrapper?: ElementRef<HTMLDivElement>;
   readonly benchSlots = [0, 1, 2, 3, 4];
   readonly showDebugInfo = false;
@@ -1594,6 +1656,7 @@ export class GamesPageComponent implements OnInit {
   draggedHandCardId = '';
   draggedEnergyCardId = '';
   draggedEvolutionCardId = '';
+  draggedSuperPotionCardId = '';
   draggedBenchPokemonInstanceId = '';
   selectedAttackPokemon: PokemonInPlayResponse | null = null;
   attackAnimation: AttackAnimationState | null = null;
@@ -1647,6 +1710,18 @@ export class GamesPageComponent implements OnInit {
     }
     const playerName = this.currentPlayer?.playerName ?? `Jugador ${this.selectedGame.currentPlayerId ?? '-'}`;
     return `Turno de ${playerName}`;
+  }
+
+  get activeStadiumText(): string {
+    const game = this.selectedGame;
+    if (!game?.activeStadiumCardId) {
+      return 'Sin estadio activo';
+    }
+    const stadiumName = game.activeStadiumName?.trim()
+      || game.activeStadium?.name?.trim()
+      || this.cardsById[game.activeStadiumCardId]?.name
+      || game.activeStadiumCardId;
+    return `Estadio activo: ${stadiumName}`;
   }
 
   get finishedGameText(): string {
@@ -1782,6 +1857,14 @@ export class GamesPageComponent implements OnInit {
       && !!this.draggedEnergyCardId
       && this.energyTargetPokemon.some((target) => target.instanceId === pokemon.instanceId)
       && this.isEnergyCompatibleWithPokemon(this.draggedEnergyCardId, pokemon.cardId);
+  }
+
+  canUseSuperPotionOn(pokemon: PokemonInPlayResponse): boolean {
+    return this.isActiveGame()
+      && this.isMainPhase()
+      && !!this.currentPlayer
+      && !!this.draggedSuperPotionCardId
+      && this.energyTargetPokemon.some((target) => target.instanceId === pokemon.instanceId);
   }
 
   canEvolvePokemonTo(pokemon: PokemonInPlayResponse): boolean {
@@ -2181,6 +2264,10 @@ export class GamesPageComponent implements OnInit {
     return `${this.cardName(pokemon.cardId)} (${zone})`;
   }
 
+  supporterStatusText(player: GamePlayerResponse): string {
+    return player.supporterPlayedThisTurn ? 'Supporter usado este turno' : 'Supporter disponible';
+  }
+
   pokemonInstanceIds(pokemon: PokemonInPlayResponse[]): string {
     return pokemon.length ? pokemon.map((item) => item.instanceId).join(', ') : '-';
   }
@@ -2203,6 +2290,25 @@ export class GamesPageComponent implements OnInit {
 
   cardDetailType(detail: SelectedCardDetail): string {
     return this.formatCardType(detail.card);
+  }
+
+  canShowTrainerAction(detail: SelectedCardDetail): boolean {
+    return this.isCurrentPlayerHandCardDetail(detail) && this.isTrainerCard(detail.cardId);
+  }
+
+  canUseTrainerNow(): boolean {
+    return this.isActiveGame() && this.isMainPhase() && !!this.selectedGame?.currentPlayerId && !!this.currentPlayer;
+  }
+
+  playTrainerFromModal(detail: SelectedCardDetail): void {
+    if (!this.canShowTrainerAction(detail) || !this.canUseTrainerNow() || this.isSuperPotion(detail.cardId)) {
+      return;
+    }
+    this.playTrainerCard(detail.cardId, undefined, `${this.cardName(detail.cardId)} usada.`, true);
+  }
+
+  private isCurrentPlayerHandCardDetail(detail: SelectedCardDetail): boolean {
+    return !detail.pokemon && !!this.currentPlayer?.handCardIds.includes(detail.cardId);
   }
 
   private formatCardType(card?: Card): string {
@@ -2252,6 +2358,7 @@ export class GamesPageComponent implements OnInit {
     this.draggedHandCardId = cardId;
     this.draggedEnergyCardId = this.isAttachableEnergy(cardId) ? cardId : '';
     this.draggedEvolutionCardId = this.isEvolutionPokemon(cardId) ? cardId : '';
+    this.draggedSuperPotionCardId = this.isSuperPotion(cardId) ? cardId : '';
     this.draggedBenchPokemonInstanceId = '';
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = 'move';
@@ -2264,6 +2371,7 @@ export class GamesPageComponent implements OnInit {
     this.draggedHandCardId = '';
     this.draggedEnergyCardId = '';
     this.draggedEvolutionCardId = '';
+    this.draggedSuperPotionCardId = '';
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = 'move';
     }
@@ -2274,6 +2382,7 @@ export class GamesPageComponent implements OnInit {
     this.draggedHandCardId = '';
     this.draggedEnergyCardId = '';
     this.draggedEvolutionCardId = '';
+    this.draggedSuperPotionCardId = '';
     this.draggedBenchPokemonInstanceId = '';
   }
 
@@ -2290,19 +2399,21 @@ export class GamesPageComponent implements OnInit {
   }
 
   onPokemonDragOver(event: DragEvent, pokemon: PokemonInPlayResponse): void {
-    if (this.canAttachEnergyTo(pokemon) || this.canDropEvolutionOn(pokemon)) {
+    if (this.canAttachEnergyTo(pokemon) || this.canDropEvolutionOn(pokemon) || this.canUseSuperPotionOn(pokemon)) {
       event.preventDefault();
     }
   }
 
   onPokemonDrop(event: DragEvent, pokemon: PokemonInPlayResponse): void {
-    if (!this.canAttachEnergyTo(pokemon) && !this.canDropEvolutionOn(pokemon)) {
+    if (!this.canAttachEnergyTo(pokemon) && !this.canDropEvolutionOn(pokemon) && !this.canUseSuperPotionOn(pokemon)) {
       return;
     }
     event.preventDefault();
     event.stopPropagation();
     if (this.canAttachEnergyTo(pokemon)) {
       this.attachEnergyToPokemon(this.draggedEnergyCardId, pokemon.instanceId);
+    } else if (this.canUseSuperPotionOn(pokemon)) {
+      this.playSuperPotionOnPokemon(this.draggedSuperPotionCardId, pokemon);
     } else if (this.canDropEvolutionOn(pokemon)) {
       this.evolvePokemonTo(this.draggedEvolutionCardId, pokemon);
     }
@@ -2378,6 +2489,38 @@ export class GamesPageComponent implements OnInit {
     );
   }
 
+  private playSuperPotionOnPokemon(trainerCardId: string, targetPokemon: PokemonInPlayResponse): void {
+    if (!trainerCardId || !targetPokemon.instanceId) {
+      return;
+    }
+    this.playTrainerCard(trainerCardId, targetPokemon.instanceId, `${this.cardName(trainerCardId)} usada.`);
+  }
+
+  private playTrainerCard(cardId: string, targetPokemonInstanceId?: string, successMessage = 'Carta Trainer usada.', closeDetailOnSuccess = false): void {
+    if (!this.selectedGame || !this.currentPlayer || !cardId) {
+      return;
+    }
+    this.error = '';
+    this.message = '';
+    this.gamesService.playTrainer(this.selectedGame.id, {
+      playerId: this.currentPlayer.id,
+      trainerCardId: cardId,
+      targetPokemonInstanceId
+    }).subscribe({
+      next: (game) => {
+        this.message = this.mutationMessage(game, successMessage);
+        this.setSelectedGame(game);
+        if (closeDetailOnSuccess) {
+          this.closeCardDetail();
+        }
+        this.refreshAfterGameUpdate();
+      },
+      error: (error) => {
+        this.error = this.backendError(error, 'No se pudo usar la carta Trainer.');
+      }
+    });
+  }
+
   handTransform(index: number, total: number): string {
     const center = (total - 1) / 2;
     const offset = index - center;
@@ -2415,8 +2558,16 @@ export class GamesPageComponent implements OnInit {
       && (this.hasCardSubtype(card, 'Stage 1') || this.hasCardSubtype(card, 'Stage 2') || this.hasCardSubtype(card, 'MEGA'));
   }
 
+  isTrainerCard(cardId: string): boolean {
+    return this.normalizeCardText(this.cardsById[cardId]?.supertype) === 'TRAINER';
+  }
+
+  isSuperPotion(cardId: string): boolean {
+    return this.cardNamesMatch(this.cardsById[cardId]?.name, this.superPotionName);
+  }
+
   isDraggableHandCard(cardId: string): boolean {
-    return this.isBasicPokemon(cardId) || this.isAttachableEnergy(cardId) || this.isEvolutionPokemon(cardId);
+    return this.isBasicPokemon(cardId) || this.isAttachableEnergy(cardId) || this.isEvolutionPokemon(cardId) || this.isSuperPotion(cardId);
   }
 
   private isEnergyCompatibleWithPokemon(energyCardId: string, pokemonCardId: string): boolean {

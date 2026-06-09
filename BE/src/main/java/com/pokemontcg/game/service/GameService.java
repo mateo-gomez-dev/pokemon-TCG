@@ -68,7 +68,18 @@ public class GameService {
     private static final int PRIZE_CARDS_START_INDEX = INITIAL_HAND_SIZE;
     private static final int REMAINING_DECK_START_INDEX = INITIAL_HAND_SIZE + PRIZE_CARD_COUNT;
     private static final String COLORLESS_ENERGY_TYPE = "Colorless";
+    private static final String DARKNESS_ENERGY_TYPE = "Darkness";
     private static final String TRAINER_SUPERTYPE = "Trainer";
+    private static final String ITEM_SUBTYPE = "Item";
+    private static final String SUPPORTER_SUBTYPE = "Supporter";
+    private static final String STADIUM_SUBTYPE = "Stadium";
+    private static final String PROFESSORS_LETTER_NAME = "Professor's Letter";
+    private static final String GREAT_BALL_NAME = "Great Ball";
+    private static final String SUPER_POTION_NAME = "Super Potion";
+    private static final String SHAUNA_NAME = "Shauna";
+    private static final String PROFESSOR_SYCAMORE_NAME = "Professor Sycamore";
+    private static final String FAIRY_GARDEN_NAME = "Fairy Garden";
+    private static final String SHADOW_CIRCLE_NAME = "Shadow Circle";
     private static final Set<String> EVOLUTION_SUBTYPES = Set.of("STAGE 1", "STAGE 2", "MEGA");
     private static final Set<String> SUPPORTED_ENERGY_TYPES = Set.of(
             "Grass", "Fire", "Water", "Lightning", "Psychic", "Fighting", "Darkness", "Metal", "Fairy", "Dragon", COLORLESS_ENERGY_TYPE
@@ -91,7 +102,8 @@ public class GameService {
             PokemonInPlay defenderActive,
             CardEntity attackerCard,
             CardEntity defenderCard,
-            JsonNode attackNode
+            JsonNode attackNode,
+            boolean preventWeakness
     ) {
     }
 
@@ -244,7 +256,151 @@ public class GameService {
         CardEntity card = findCardOrBadRequest(request.trainerCardId(), "Carta no encontrada");
         assertTrainerCard(card);
 
-        throw new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED, "El efecto de esta carta Trainer todavía no está implementado.");
+        if (hasSubtype(card, ITEM_SUBTYPE)) {
+            playItem(game, player, card, request);
+        } else if (hasSubtype(card, SUPPORTER_SUBTYPE)) {
+            playSupporter(game, player, card);
+        } else if (hasSubtype(card, STADIUM_SUBTYPE)) {
+            playStadium(game, player, card);
+        } else {
+            throwUnimplementedTrainerEffect();
+        }
+
+        return toResponse(gameRepository.save(game));
+    }
+
+    private void playItem(GameEntity game, GamePlayerEntity player, CardEntity trainerCard, PlayTrainerRequest request) {
+        if (cardNameMatches(trainerCard, PROFESSORS_LETTER_NAME)) {
+            playProfessorsLetter(game, player, trainerCard);
+        } else if (cardNameMatches(trainerCard, GREAT_BALL_NAME)) {
+            playGreatBall(game, player, trainerCard);
+        } else if (cardNameMatches(trainerCard, SUPER_POTION_NAME)) {
+            playSuperPotion(game, player, trainerCard, request);
+        } else {
+            throwUnimplementedTrainerEffect();
+        }
+    }
+
+    private void playProfessorsLetter(GameEntity game, GamePlayerEntity player, CardEntity trainerCard) {
+        Map<String, CardEntity> cardsById = findCardsById(player.getDeckCardIds());
+        List<String> energyCardIds = new ArrayList<>();
+        for (String cardId : player.getDeckCardIds()) {
+            CardEntity deckCard = cardsById.get(cardId);
+            if (deckCard != null && isBasicEnergy(deckCard)) {
+                energyCardIds.add(cardId);
+                if (energyCardIds.size() == 2) {
+                    break;
+                }
+            }
+        }
+
+        for (String energyCardId : energyCardIds) {
+            player.getDeckCardIds().remove(energyCardId);
+            player.getHandCardIds().add(energyCardId);
+        }
+        discardTrainerFromHand(player, trainerCard.getId());
+
+        if (energyCardIds.isEmpty()) {
+            addLog(game, player.getId(), "PLAY_TRAINER", player.getPlayerName() + " usó " + trainerCard.getName() + " y no encontró energías básicas.");
+        } else {
+            String quantityText = energyCardIds.size() == 1 ? "1 energía básica" : energyCardIds.size() + " energías básicas";
+            addLog(game, player.getId(), "PLAY_TRAINER", player.getPlayerName() + " usó " + trainerCard.getName()
+                    + " y agregó " + quantityText + " a su mano.");
+        }
+    }
+
+    private void playGreatBall(GameEntity game, GamePlayerEntity player, CardEntity trainerCard) {
+        int lookCount = Math.min(7, player.getDeckCardIds().size());
+        List<String> topCardIds = new ArrayList<>(player.getDeckCardIds().subList(0, lookCount));
+        Map<String, CardEntity> cardsById = findCardsById(topCardIds);
+        String foundPokemonCardId = null;
+        CardEntity foundPokemonCard = null;
+
+        for (String cardId : topCardIds) {
+            CardEntity deckCard = cardsById.get(cardId);
+            if (deckCard != null && POKEMON_SUPERTYPE.equalsIgnoreCase(deckCard.getSupertype())) {
+                foundPokemonCardId = cardId;
+                foundPokemonCard = deckCard;
+                break;
+            }
+        }
+
+        if (foundPokemonCardId != null) {
+            player.getDeckCardIds().remove(foundPokemonCardId);
+            player.getHandCardIds().add(foundPokemonCardId);
+        }
+        discardTrainerFromHand(player, trainerCard.getId());
+
+        if (foundPokemonCard == null) {
+            addLog(game, player.getId(), "PLAY_TRAINER", player.getPlayerName() + " usó " + trainerCard.getName() + " y no encontró Pokémon.");
+        } else {
+            addLog(game, player.getId(), "PLAY_TRAINER", player.getPlayerName() + " usó " + trainerCard.getName()
+                    + " y agregó " + foundPokemonCard.getName() + " a su mano.");
+        }
+    }
+
+    private void playSuperPotion(GameEntity game, GamePlayerEntity player, CardEntity trainerCard, PlayTrainerRequest request) {
+        if (request.targetPokemonInstanceId() == null || request.targetPokemonInstanceId().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Se debe enviar targetPokemonInstanceId");
+        }
+        PokemonInPlay targetPokemon = findPokemonByInstanceId(player, request.targetPokemonInstanceId(), "No puedes curar un Pokémon rival.");
+        if (targetPokemon.getDamage() <= 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Ese Pokémon no tiene daño para curar.");
+        }
+
+        CardEntity targetCard = findCardOrBadRequest(targetPokemon.getCardId(), "Pokemon objetivo no encontrado");
+        int healedDamage = Math.min(60, targetPokemon.getDamage());
+        targetPokemon.setDamage(targetPokemon.getDamage() - healedDamage);
+        discardTrainerFromHand(player, trainerCard.getId());
+        syncDerivedPokemonFields(player);
+        addLog(game, player.getId(), "PLAY_TRAINER", player.getPlayerName() + " usó " + trainerCard.getName()
+                + " y curó " + healedDamage + " de daño de " + targetCard.getName() + ".");
+    }
+
+    private void playSupporter(GameEntity game, GamePlayerEntity player, CardEntity trainerCard) {
+        if (isSupporterAlreadyPlayed(player)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Ya jugaste un Supporter este turno.");
+        }
+
+        if (cardNameMatches(trainerCard, SHAUNA_NAME)) {
+            playShauna(game, player, trainerCard);
+        } else if (cardNameMatches(trainerCard, PROFESSOR_SYCAMORE_NAME)) {
+            playProfessorSycamore(game, player, trainerCard);
+        } else {
+            throwUnimplementedTrainerEffect();
+        }
+    }
+
+    private void playShauna(GameEntity game, GamePlayerEntity player, CardEntity trainerCard) {
+        discardTrainerFromHand(player, trainerCard.getId());
+        List<String> remainingHand = new ArrayList<>(player.getHandCardIds());
+        player.getHandCardIds().clear();
+        player.getDeckCardIds().addAll(remainingHand);
+        Collections.shuffle(player.getDeckCardIds());
+        int drawnCards = drawCards(player, 5);
+        player.setSupporterPlayedThisTurn(true);
+        addLog(game, player.getId(), "PLAY_TRAINER", player.getPlayerName() + " usó " + trainerCard.getName()
+                + " y robó " + drawnCards + " cartas.");
+    }
+
+    private void playProfessorSycamore(GameEntity game, GamePlayerEntity player, CardEntity trainerCard) {
+        discardTrainerFromHand(player, trainerCard.getId());
+        player.getDiscardCardIds().addAll(player.getHandCardIds());
+        player.getHandCardIds().clear();
+        int drawnCards = drawCards(player, 7);
+        player.setSupporterPlayedThisTurn(true);
+        addLog(game, player.getId(), "PLAY_TRAINER", player.getPlayerName() + " usó " + trainerCard.getName()
+                + ", descartó su mano y robó " + drawnCards + " cartas.");
+    }
+
+    private void playStadium(GameEntity game, GamePlayerEntity player, CardEntity trainerCard) {
+        if (!cardNameMatches(trainerCard, FAIRY_GARDEN_NAME) && !cardNameMatches(trainerCard, SHADOW_CIRCLE_NAME)) {
+            throwUnimplementedTrainerEffect();
+        }
+
+        game.setActiveStadiumCardId(trainerCard.getId());
+        discardTrainerFromHand(player, trainerCard.getId());
+        addLog(game, player.getId(), "PLAY_TRAINER", player.getPlayerName() + " jugó el estadio " + trainerCard.getName() + ".");
     }
 
     @Transactional
@@ -359,18 +515,20 @@ public class GameService {
 
         List<String> requiredCardIds = new ArrayList<>(List.of(attackerActiveCardId, defenderActiveCardId));
         requiredCardIds.addAll(attackerActive.getAttachedEnergyCardIds());
+        requiredCardIds.addAll(defenderActive.getAttachedEnergyCardIds());
         Map<String, CardEntity> cardsById = findCardsById(requiredCardIds);
         CardEntity attackerCard = findCard(cardsById, attackerActiveCardId, "Pokemon atacante no encontrado");
         CardEntity defenderCard = findCard(cardsById, defenderActiveCardId, "Pokemon defensor no encontrado");
         JsonNode attackNode = resolveAttack(attackerCard, request);
         List<CardEntity> attachedEnergyCards = attachedEnergyCards(attackerActive, cardsById);
         assertCanPayAttackCost(attackNode, attachedEnergyCards);
+        boolean preventWeakness = isShadowCircleActive(game) && hasDarknessEnergyAttached(defenderActive, cardsById);
 
-        return new AttackContext(attacker, defender, attackerActive, defenderActive, attackerCard, defenderCard, attackNode);
+        return new AttackContext(attacker, defender, attackerActive, defenderActive, attackerCard, defenderCard, attackNode, preventWeakness);
     }
 
     private void applyAttackDamage(GameEntity game, AttackContext attack) {
-        DamageCalculation damage = calculateDamage(attack.attackNode(), attack.attackerCard(), attack.defenderCard());
+        DamageCalculation damage = calculateDamage(attack.attackNode(), attack.attackerCard(), attack.defenderCard(), attack.preventWeakness());
         int accumulatedDamage = attack.defenderActive().getDamage() + damage.finalDamage();
         attack.defenderActive().setDamage(accumulatedDamage);
 
@@ -412,6 +570,7 @@ public class GameService {
         game.setCurrentPlayerId(nextPlayer.getId());
         game.setTurnPhase(TurnPhase.DRAW);
         nextPlayer.setEnergyAttachedThisTurn(false);
+        nextPlayer.setSupporterPlayedThisTurn(false);
     }
 
     private GameEntity findGame(Long id) {
@@ -487,6 +646,35 @@ public class GameService {
         if (!TRAINER_SUPERTYPE.equalsIgnoreCase(card.getSupertype())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La carta seleccionada no es una carta Trainer.");
         }
+    }
+
+    private boolean cardNameMatches(CardEntity card, String expectedName) {
+        return cardNamesMatch(card.getName(), expectedName);
+    }
+
+    private void throwUnimplementedTrainerEffect() {
+        throw new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED, "El efecto de esta carta Trainer todavía no está implementado.");
+    }
+
+    private boolean isBasicEnergy(CardEntity card) {
+        return ENERGY_SUPERTYPE.equalsIgnoreCase(card.getSupertype()) && hasSubtype(card, BASIC_SUBTYPE) && !isSpecialAnyEnergy(card);
+    }
+
+    private void discardTrainerFromHand(GamePlayerEntity player, String trainerCardId) {
+        player.getHandCardIds().remove(trainerCardId);
+        player.getDiscardCardIds().add(trainerCardId);
+    }
+
+    private int drawCards(GamePlayerEntity player, int requestedCards) {
+        int drawnCards = Math.min(requestedCards, player.getDeckCardIds().size());
+        for (int index = 0; index < drawnCards; index++) {
+            player.getHandCardIds().add(player.getDeckCardIds().removeFirst());
+        }
+        return drawnCards;
+    }
+
+    private boolean isSupporterAlreadyPlayed(GamePlayerEntity player) {
+        return Boolean.TRUE.equals(player.getSupporterPlayedThisTurn());
     }
 
     private void assertAttachableEnergy(CardEntity card, CardEntity pokemonCard) {
@@ -663,6 +851,7 @@ public class GameService {
         player.getAttachedEnergyCardIdsByPokemonCardId().clear();
         player.getDamageByPokemonCardId().clear();
         player.setEnergyAttachedThisTurn(false);
+        player.setSupporterPlayedThisTurn(false);
         player.setDeckCardIds(new ArrayList<>(deckCardIds.subList(REMAINING_DECK_START_INDEX, deckCardIds.size())));
         player.setDiscardCardIds(new ArrayList<>());
     }
@@ -875,6 +1064,26 @@ public class GameService {
         throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se pudo determinar el tipo de energia de " + card.getName() + ".");
     }
 
+    private boolean hasDarknessEnergyAttached(PokemonInPlay pokemon, Map<String, CardEntity> cardsById) {
+        for (String energyCardId : pokemon.getAttachedEnergyCardIds()) {
+            CardEntity energyCard = cardsById.get(energyCardId);
+            if (energyCard != null && DARKNESS_ENERGY_TYPE.equals(energyType(energyCard))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isShadowCircleActive(GameEntity game) {
+        String activeStadiumCardId = game.getActiveStadiumCardId();
+        if (activeStadiumCardId == null || activeStadiumCardId.isBlank()) {
+            return false;
+        }
+        return cardRepository.findById(activeStadiumCardId)
+                .map(stadiumCard -> cardNameMatches(stadiumCard, SHADOW_CIRCLE_NAME))
+                .orElse(false);
+    }
+
     private String canonicalEnergyType(String value) {
         String normalized = normalizeEnergyType(value);
         for (String supportedType : SUPPORTED_ENERGY_TYPES) {
@@ -899,7 +1108,7 @@ public class GameService {
         return matcher.find() ? Integer.parseInt(matcher.group()) : 0;
     }
 
-    private DamageCalculation calculateDamage(JsonNode attack, CardEntity attackerCard, CardEntity defenderCard) {
+    private DamageCalculation calculateDamage(JsonNode attack, CardEntity attackerCard, CardEntity defenderCard, boolean preventWeakness) {
         int baseDamage = attackDamage(attack);
         if (baseDamage <= 0) {
             return new DamageCalculation(baseDamage, 0, "no", "no");
@@ -910,7 +1119,7 @@ public class GameService {
             return new DamageCalculation(baseDamage, baseDamage, "no", "no");
         }
 
-        DamageModifier weakness = applyWeakness(baseDamage, defenderCard.getWeaknesses(), attackerType);
+        DamageModifier weakness = preventWeakness ? new DamageModifier(baseDamage, "no") : applyWeakness(baseDamage, defenderCard.getWeaknesses(), attackerType);
         DamageModifier resistance = applyResistance(weakness.damage(), defenderCard.getResistances(), attackerType);
         return new DamageCalculation(baseDamage, Math.max(0, resistance.damage()), weakness.label(), resistance.label());
     }
@@ -1093,6 +1302,7 @@ public class GameService {
                 game.getTurnPhase(),
                 game.getCurrentPlayerId(),
                 game.getWinnerPlayerId(),
+                game.getActiveStadiumCardId(),
                 game.getCreatedAt(),
                 game.getUpdatedAt(),
                 game.getStartedAt(),
@@ -1135,6 +1345,7 @@ public class GameService {
                 player.getBenchCardIds().size(),
                 player.getDiscardCardIds().size(),
                 player.isEnergyAttachedThisTurn(),
+                player.isSupporterPlayedThisTurn(),
                 player.getActivePokemonInstanceId(),
                 player.getActivePokemonCardId(),
                 active == null ? null : toPokemonInPlayResponse(active, cardsById),

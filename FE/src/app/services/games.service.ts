@@ -11,6 +11,7 @@ import {
   GameResponse,
   JoinGameRequest,
   PlayBasicPokemonRequest,
+  PlayTrainerRequest,
   PromoteActiveRequest
 } from '../models/game.model';
 
@@ -51,6 +52,10 @@ export class GamesService {
 
   playBasicPokemon(id: number, request: PlayBasicPokemonRequest): Observable<GameResponse> {
     return this.http.post<GameResponse>(`${this.apiUrl}/${id}/actions/play-basic-pokemon`, request);
+  }
+
+  playTrainer(id: number, request: PlayTrainerRequest): Observable<GameResponse> {
+    return this.http.post<GameResponse>(`${this.apiUrl}/${id}/actions/play-trainer`, request);
   }
 
   attachEnergy(id: number, request: AttachEnergyRequest): Observable<GameResponse> {
