@@ -10,6 +10,7 @@ public record PokemonInPlayResponse(
         int damage,
         int remainingHp,
         List<String> attachedEnergyCardIds,
-        int attachedEnergyCount
+        int attachedEnergyCount,
+        String attachedToolCardId
 ) {
 }

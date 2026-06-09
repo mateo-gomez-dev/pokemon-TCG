@@ -10,6 +10,7 @@ public class PokemonInPlay {
     private PokemonZone zone;
     private int damage;
     private List<String> attachedEnergyCardIds = new ArrayList<>();
+    private String attachedToolCardId;
 
     public PokemonInPlay() {
     }
@@ -58,5 +59,13 @@ public class PokemonInPlay {
 
     public void setAttachedEnergyCardIds(List<String> attachedEnergyCardIds) {
         this.attachedEnergyCardIds = attachedEnergyCardIds;
+    }
+
+    public String getAttachedToolCardId() {
+        return attachedToolCardId;
+    }
+
+    public void setAttachedToolCardId(String attachedToolCardId) {
+        this.attachedToolCardId = attachedToolCardId;
     }
 }

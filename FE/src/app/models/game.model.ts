@@ -94,6 +94,7 @@ export interface PokemonInPlayResponse {
   remainingHp: number;
   attachedEnergyCardIds: string[];
   attachedEnergyCount: number;
+  attachedToolCardId?: string | null;
 }
 
 export interface GameLogResponse {
